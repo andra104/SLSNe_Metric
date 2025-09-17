@@ -12,6 +12,14 @@ from itertools import islice
 from slsne.lcurve import get_all_lcs
 from tqdm.auto import tqdm
 
+# at top of export_slsne_photometry.py, after imports
+try:
+    from IPython.display import display  # for notebooks
+except Exception:
+    def display(x):
+        print(x)
+
+
 
 
 # simple filter normalization
@@ -121,24 +129,22 @@ def to_export(df_raw: pd.DataFrame) -> pd.DataFrame:
     return out_perevent[["mjd","mag","mag_err","UL", "filter","detected"]]
 
 # Cell 3 — process a single event for quick sanity check
-def process_one(event_name: str):
-    event_dir = supernovae_dir / event_name
-    infile = event_dir / f"{event_name}.txt"
+
+def process_one(event_dir: Path, event_name: str,
+                out_perevent: Path, *, write_parquet: bool, write_csv: bool):
+    infile = event_dir / f"{event_name}.txt"   # <-- use the directory you passed
     if not infile.exists():
         raise FileNotFoundError(f"Could not find {infile}")
 
-    # use the reader you defined above
-    df_raw = read_supernova_table_txt(infile)
-    df_out = to_export(df_raw)
+    df_out = to_export(read_supernova_table_txt(infile))
 
-    # write parquet/csv to the *lowercase* 'out_perevent' folder you created
+    out_perevent.mkdir(parents=True, exist_ok=True)
     if write_parquet:
         df_out.to_parquet(out_perevent / f"{event_name}.parquet",
                           index=False, engine="pyarrow",
                           compression="zstd", compression_level=7)
     if write_csv:
         df_out.to_csv(out_perevent / f"{event_name}.csv", index=False)
-
     return df_out
 
 # --------------------------------------
@@ -147,10 +153,13 @@ def process_one(event_name: str):
 # --------------------------------------
 # --------------------------------------
 
-def process_all_events(
-    include_ul: bool = True,        # keep original UL column in the per-event files
-    make_combined: bool = True      # also write a single combined dataset
-):
+def process_all_events(supernovae_dir: Path,
+                       out_perevent: Path,
+                       out_allevent: Path,
+                       *, include_ul: bool = True,
+                       make_combined: bool = True,
+                       write_parquet: bool = True,
+                       write_csv: bool = True):
     rows = []
     combined_frames = [] if make_combined else None
 

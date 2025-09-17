@@ -1,3 +1,6 @@
+
+#####
+
 # Cell 1 — setup
 from pathlib import Path
 import numpy as np
@@ -279,4 +282,5 @@ def print_cols(df, requested=None, head=10):
     show = resolve_cols(df, requested)
     display(df[show].head(head))
     return show
+
 

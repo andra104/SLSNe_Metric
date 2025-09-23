@@ -105,8 +105,8 @@ def to_export(df_raw: pd.DataFrame) -> pd.DataFrame:
     ul = coerce_bool(df["UL"])           # True = upper limit
     detected = (~ul).astype(np.int8)
 
-    # *** PRESERVE FILTER STRINGS EXACTLY AS IN SOURCE ***
-    filt = df["Filter"].astype("string")  # no .strip(), no lower(), no mapping
+    # *** PRESERVE FILTER STRINGS relatively AS IN SOURCE ***
+    filt = df["Filter"].astype("string").map(lambda s: s.strip() if isinstance(s, str) else s)
 
     out_perevent = pd.DataFrame({
         "mjd": mjd.astype(float),
@@ -120,8 +120,18 @@ def to_export(df_raw: pd.DataFrame) -> pd.DataFrame:
     keep = out_perevent[["mjd","mag","mag_err","UL","filter"]].notna().any(axis=1)
     out_perevent = out_perevent[keep].reset_index(drop=True)
 
+    out_perevent = out_perevent.astype({
+    "mjd": "float64",
+    "mag": "float64",
+    "mag_err": "float64",
+    "UL": "boolean",           # pandas Nullable Boolean
+    "filter": "string",
+    "detected": "int8",
+})
+
     # return columns in agreed order (keeping 'UL' if you’ve been writing it)
-    return out_perevent[["mjd","mag","mag_err","UL","filter","detected"]]
+    return out_perevent
+
 
 # Cell 3 — process a single event for quick sanity check
 
@@ -171,7 +181,9 @@ def process_all_events(supernovae_dir: Path,
 
         try:
             df_raw = read_supernova_table_txt(infile)
-            df_out = to_export(df_raw) if include_ul is None else to_export(df_raw)  # your to_export already adds UL
+            df_out = to_export(df_raw)
+            if not include_ul:
+                df_out = df_out[df_out["detected"] == 1].reset_index(drop=True)
 
             # write per-event
             if write_csv:

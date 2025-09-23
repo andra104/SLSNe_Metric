@@ -75,6 +75,11 @@ def norm_filter(x):
     low = key.lower()
     return FILTER_MAP.get(low, key)
 
+
+
+# 1) You can keep FILTER_MAP / norm_filter defined (for future use),
+#    but DO NOT call it in to_export().
+
 def to_export(df_raw: pd.DataFrame) -> pd.DataFrame:
     """
     Convert a per-object table to Felipe's 5 columns:
@@ -82,51 +87,41 @@ def to_export(df_raw: pd.DataFrame) -> pd.DataFrame:
     Interprets UL=True as non-detection -> detected=0, mag_err=inf.
     Treats MagErr = -1.0 as 'unknown' (kept as NaN) for detections; for UL rows we set inf anyway.
     """
-    # columns we expect in these tables
     need = ["MJD","Mag","MagErr","Filter","UL"]
     cols = {c: c for c in df_raw.columns}
     missing = [c for c in need if c not in cols]
     if missing:
-        # show for debugging
         raise ValueError(f"Missing columns {missing}. Found: {list(df_raw.columns)}")
 
     df = df_raw.copy()
 
-    # coerce numerics
+    # numerics
     mjd = pd.to_numeric(df["MJD"], errors="coerce")
     mag = pd.to_numeric(df["Mag"], errors="coerce")
 
-    # MagErr handling:
-    # - Many ROTSE UL rows use -1.0; we will coerce to NaN first
     mag_err = pd.to_numeric(df["MagErr"], errors="coerce").astype(float)
     mag_err[mag_err < 0] = np.nan
 
-    # UL flag: True means upper limit
-    ul = coerce_bool(df["UL"])
-
-    # detected flag
+    ul = coerce_bool(df["UL"])           # True = upper limit
     detected = (~ul).astype(np.int8)
 
-    # for UL rows, enforce Felipe convention
-    mag_err[ul.values] = np.inf
-
-    # filters normalized
-    filt = df["Filter"].map(norm_filter).astype("string")
+    # *** PRESERVE FILTER STRINGS EXACTLY AS IN SOURCE ***
+    filt = df["Filter"].astype("string")  # no .strip(), no lower(), no mapping
 
     out_perevent = pd.DataFrame({
         "mjd": mjd.astype(float),
         "mag": mag.astype(float),
         "mag_err": mag_err,
-        "filter": filt,
         "UL": ul,
+        "filter": filt,
         "detected": detected
     }).sort_values("mjd").reset_index(drop=True)
 
-    # drop rows that are totally empty (all NaN except 'detected' which would be 1 by default if UL missing)
     keep = out_perevent[["mjd","mag","mag_err","UL","filter"]].notna().any(axis=1)
     out_perevent = out_perevent[keep].reset_index(drop=True)
 
-    return out_perevent[["mjd","mag","mag_err","UL", "filter","detected"]]
+    # return columns in agreed order (keeping 'UL' if you’ve been writing it)
+    return out_perevent[["mjd","mag","mag_err","UL","filter","detected"]]
 
 # Cell 3 — process a single event for quick sanity check
 

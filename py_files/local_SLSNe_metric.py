@@ -1,5 +1,6 @@
 # slsn_gp_lc.py
 # Survey-ready SLSN templates from catalog photometry via 2D GP (time, wavelength).
+from __future__ import annotations
 
 from rubin_sim.maf.metrics import BaseMetric
 
@@ -29,7 +30,6 @@ import os
 import pickle 
 from pathlib import Path
 
-from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import pandas as pd
@@ -52,14 +52,21 @@ DEBUG = False
 # Constants & filter mappings
 # ----------------------------
 
-# ZTF effective wavelengths (Å) used during training
+# Speed of light (m/s)
+_C_MS = 2.99792458e8
+
+# AB system
+F0_JY = 3631.0
+LN10_OVER_2P5 = np.log(10.0) / 2.5
+
+# ZTF effective wavelengths (Å) — used if your catalogs reference ztfg/ztfr/ztfi
 ZTF_EFF_LAMBDA = {
     "ztfg": 4800.0,
     "ztfr": 6400.0,
     "ztfi": 7900.0,
 }
 
-# LSST central frequencies (Hz) for prediction / template standardization
+# LSST effective *frequencies* (Hz) where we will PREDICT final templates
 LSST_EFF_FREQ = {
     'u': 8.088e14,
     'g': 6.293e14,
@@ -69,30 +76,35 @@ LSST_EFF_FREQ = {
     'y': 3.080e14,
 }
 
-# Speed of light
-_C_MS = 2.99792458e8
+def angstrom_to_hz(lambda_A):
+    """Å to Hz (accepts scalar or array)."""
+    lam_m = np.asarray(lambda_A, dtype=float) * 1e-10
+    return _C_MS / lam_m
 
-# AB zero-point (Jy) and derivative
-F0_JY = 3631.0
-LN10_OVER_2P5 = np.log(10.0) / 2.5
+def hz_to_angstrom(nu_hz):
+    """Hz to Å (accepts scalar or array)."""
+    nu = np.asarray(nu_hz, dtype=float)
+    return (_C_MS / nu) * 1e10
 
+
+# LSST central λ (Å), derived from LSST_EFF_FREQ
+LSST_EFF_LAMBDA = {b: hz_to_angstrom(nu) for b, nu in LSST_EFF_FREQ.items()}
+
+# SDSS aliases (optional convenience)
+SDSS_ALIAS = {'sdssu':'u','sdssg':'g','sdssr':'r','sdssi':'i','sdssz':'z'}
 
 # ----------------------------
 # Unit helpers
 # ----------------------------
-
 def mag_to_flux_jy(mag: np.ndarray) -> np.ndarray:
-    """AB mag → flux (Jy)."""
     m = np.asarray(mag, float)
     return F0_JY * 10.0 ** (-0.4 * m)
 
 def magerr_to_fluxerr_jy(mag: np.ndarray, mag_err: np.ndarray) -> np.ndarray:
-    """σ_m → σ_f (Jy). First-order, adequate for GP noise model."""
     f = mag_to_flux_jy(mag)
     return LN10_OVER_2P5 * f * np.asarray(mag_err, float)
 
 def flux_jy_to_mag(flux_jy: np.ndarray) -> np.ndarray:
-    """Flux (Jy) → AB mag. NaN for non-positive flux."""
     f = np.asarray(flux_jy, float)
     out = np.full_like(f, np.nan, dtype=float)
     good = f > 0
@@ -100,15 +112,58 @@ def flux_jy_to_mag(flux_jy: np.ndarray) -> np.ndarray:
     return out
 
 def dm_from_z(z: float) -> float:
-    """Distance modulus from Planck18 cosmology."""
     DL = cosmo.luminosity_distance(float(z)).to_value(u.Mpc)
     return 5.0 * np.log10(DL) + 25.0
 
-def angstrom_to_hz(lambda_A: float) -> float:
-    """Å → Hz."""
-    lam_m = float(lambda_A) * 1e-10
-    return _C_MS / lam_m
+class FilterResolver:
+    """
+    Resolve arbitrary catalog filter names to effective wavelength (Å).
+    Priority:
+      (1) Per-row numeric column (e.g., 'lambda_eff', 'eff_lambda', 'wavelength', 'lambda_c')
+      (2) User map {name_lower: lambda_eff_Angstrom}
+      (3) Built-ins (ZTF/LSST)
+    Also normalizes keys by removing common prefixes (ps1_, panstarrs_, lsst_, ztf_) and SDSS aliases.
+    """
+    def __init__(self,
+                 user_map: dict[str, float] | None = None,
+                 per_row_lambda_cols: tuple[str, ...] = ("lambda_eff", "eff_lambda", "wavelength", "lambda_c")):
+        self.user_map = {str(k).strip().lower(): float(v) for k, v in (user_map or {}).items()}
+        self.per_row_lambda_cols = tuple(c.lower() for c in per_row_lambda_cols)
 
+        default = {}
+        default.update({k.lower(): v for k, v in ZTF_EFF_LAMBDA.items()})
+        default.update({k.lower(): v for k, v in LSST_EFF_LAMBDA.items()})
+        self.default_map = default
+
+    @staticmethod
+    def _normalize_key(raw: str) -> str:
+        s = str(raw).strip().lower()
+        # strip common instrument prefixes
+        for pref in ("ps1_", "panstarrs_", "lsst_", "ztf_"):
+            if s.startswith(pref):
+                s = s[len(pref):]
+        # sdss alias collapse
+        s = SDSS_ALIAS.get(s, s)
+        return s
+
+    def per_row_lambda(self, df_row: pd.Series) -> float | None:
+        idx_lower = {c.lower(): c for c in df_row.index}
+        for col in self.per_row_lambda_cols:
+            if col in idx_lower:
+                try:
+                    lam = float(df_row[idx_lower[col]])
+                    return lam if np.isfinite(lam) and lam > 0 else None
+                except Exception:
+                    return None
+        return None
+
+    def name_to_lambda(self, name: str) -> float | None:
+        k0 = str(name).strip().lower()
+        k1 = self._normalize_key(k0)
+        return (
+            self.user_map.get(k0) or self.user_map.get(k1) or
+            self.default_map.get(k0) or self.default_map.get(k1)
+        )
 
 # ----------------------------
 # GP helpers (Tyler-style)
@@ -272,37 +327,63 @@ class LC:
                      n_time: int = 220,
                      kernel: george.kernels.Kernel | None = None,
                      min_points_for_fit: int = 6,
-                     save_to: Path | None = None) -> "LC":
+                     save_to: Path | None = None,
+                     # NEW:
+                     filters_dir: Path | None = None,
+                     user_filter_map: dict[str, float] | None = None,
+                     per_row_lambda_cols: tuple[str, ...] = ("lambda_eff", "eff_lambda", "wavelength", "lambda_c")
+                     ) -> "LC":
+
         """
         Build SLSN templates from per-event photometry using a 2D GP and parameters.txt
         (redshift + optional peak MJD). Saves {'lightcurves','t_grid'} if save_to is set.
+    
+        NEW:
+          filters_dir        : directory containing filter throughput curves from Sebastian's repo.
+          user_filter_map    : {filter_name_lower: lambda_eff_Angstrom} to override/extend resolver.
+          per_row_lambda_cols: column names to search for a numeric effective wavelength in the photometry files.
         """
         phot_dir = Path(inputs.photometry_dir)
         params = inputs.params_table.copy()
         params.columns = [str(c).strip() for c in params.columns]
-
+    
         def resolve_col(df, key):
             if key in df.columns:
                 return key
-            # soft match by lowercase
             kl = key.lower()
             for c in df.columns:
                 if str(c).lower() == kl:
                     return c
-            return key  # may raise later if truly absent
-
+            return key
+    
         name_col = resolve_col(params, inputs.name_col)
         z_col    = resolve_col(params, inputs.z_col)
         peak_col = inputs.peak_mjd_col if inputs.peak_mjd_col in params.columns else None
+    
+        # --- Build the filter map from curves (if provided) and initialize the resolver
+        built_map = {}
+        if filters_dir is not None:
+            try:
+                built_map = build_filter_map_from_curves(Path(filters_dir), which_central="pivot")
+            except Exception as e:
+                warnings.warn(f"[filters] Could not build filter map from {filters_dir}: {e!r}")
+        
+        # user overrides win over built map
+        combined_map = dict(built_map)
+        if user_filter_map:
+            combined_map.update({k.lower(): float(v) for k, v in user_filter_map.items()})
+        
+        resolver = FilterResolver(user_map=combined_map, per_row_lambda_cols=per_row_lambda_cols)
 
+    
         templates = []
         saved_t_grid = None
-
+    
         for _, row in params.iterrows():
             name = str(row[name_col]).strip()
             if not name or name.lower() in {"nan", "none"}:
                 continue
-
+    
             # redshift
             try:
                 z = float(row[z_col])
@@ -312,7 +393,7 @@ class LC:
             if not np.isfinite(z) or z <= 0:
                 warnings.warn(f"[{name}] non-positive redshift; skipping.")
                 continue
-
+    
             # locate per-event file
             f_csv  = phot_dir / filename_pattern.format(name=name)
             f_parq = f_csv.with_suffix(".parquet")
@@ -320,12 +401,12 @@ class LC:
             if path is None:
                 warnings.warn(f"[{name}] no photometry file found.")
                 continue
-
+    
             # load photometry
             df = pd.read_parquet(path) if path.suffix == ".parquet" else pd.read_csv(path)
             cols = {c.lower().strip(): c for c in df.columns}
             def colget(k): return df[cols[k]]
-
+    
             try:
                 mjd = np.asarray(colget("mjd"), float)
                 mag = np.asarray(colget("mag"), float)
@@ -335,27 +416,38 @@ class LC:
             except Exception as e:
                 warnings.warn(f"[{name}] bad columns: {e!r}")
                 continue
-
+    
             # drop U/L if requested
             keep = ~ul
             mjd, mag, mag_err, filt = mjd[keep], mag[keep], mag_err[keep], filt[keep]
-
+            df = df.loc[keep].reset_index(drop=True)  # keep in sync for per-row λ
+    
             # drop non-finite rows
             good = np.isfinite(mjd) & np.isfinite(mag) & np.isfinite(mag_err)
             if good.sum() < min_points_for_fit:
                 warnings.warn(f"[{name}] too few finite points after cuts; skipping.")
                 continue
             mjd, mag, mag_err, filt = mjd[good], mag[good], mag_err[good], filt[good]
-
-            # map training bands → frequency (Hz)
-            filt_lc = [s.lower().strip() for s in filt]
-            nu = np.array([angstrom_to_hz(ZTF_EFF_LAMBDA.get(f, np.nan)) for f in filt_lc], float)
-            ok = np.isfinite(nu)
+            df = df.loc[good].reset_index(drop=True)
+    
+            # --- Resolve λ_eff (Å) per point: per-row column OR by name via resolver
+            lam_eff = np.empty_like(mjd, dtype=float)
+            for i in range(len(mjd)):
+                lam = resolver.per_row_lambda(df.iloc[i])
+                if lam is None:
+                    lam = resolver.name_to_lambda(filt[i])
+                lam_eff[i] = lam if (lam is not None) else np.nan
+            
+            ok = np.isfinite(lam_eff) & (lam_eff > 0)
             if ok.sum() < min_points_for_fit:
-                warnings.warn(f"[{name}] unsupported filters / no frequencies; skipping.")
+                warnings.warn(f"[{name}] unsupported filters / no λ_eff; skipping.")
                 continue
-            mjd, mag, mag_err, nu = mjd[ok], mag[ok], mag_err[ok], nu[ok]
+            
+            # Convert to frequency (Hz) for GP
+            nu = angstrom_to_hz(lam_eff[ok])
+            mjd_use, mag_use, magerr_use = mjd[ok], mag[ok], mag_err[ok]
 
+    
             # choose reference epoch t0 (observed frame)
             t0 = None
             if peak_col is not None:
@@ -364,67 +456,58 @@ class LC:
                 except Exception:
                     t0 = None
             if (t0 is None) or (not np.isfinite(t0)):
-                # fallback: time of min mag among ZTF gri
-                sel = np.isin(np.array(filt_lc)[ok], ["ztfg", "ztfr", "ztfi"])
-                if sel.sum() >= 1:
-                    idx_local = np.nanargmin(mag[sel])
-                    idx = np.flatnonzero(sel)[idx_local]
-                    t0 = mjd[idx]
-                else:
-                    t0 = mjd[np.nanargmin(mag)]
-
-            # prepare flux domain for GP (fit in observed MJD)
-            flux    = mag_to_flux_jy(mag)
-            fluxerr = magerr_to_fluxerr_jy(mag, mag_err)
-
+                # fallback: min mag among all bands available
+                t0 = mjd_use[np.nanargmin(mag_use)]
+    
+            # flux domain for GP
+            flux    = mag_to_flux_jy(mag_use)
+            fluxerr = magerr_to_fluxerr_jy(mag_use, magerr_use)
+    
             # fit GP
             try:
-                gp_predict = fit_2d_gp(mjd, nu, flux, fluxerr, kernel=kernel)
+                gp_predict = fit_2d_gp(mjd_use, nu, flux, fluxerr, kernel=kernel)
             except Exception as e:
                 warnings.warn(f"[{name}] GP fit failed: {e!r}")
                 continue
-
+    
             # evaluate window around t0 (observed frame), then convert to rest-frame phase
             t_eval_obs = np.linspace(t0 - tpad_pre_days, t0 + tpad_post_days, n_time)
             pred = gp_predict_surface(gp_predict, t_eval_obs, LSST_EFF_FREQ)
-
+    
             # rest-frame phase & absolute magnitudes
             DM = dm_from_z(z)
-            phase = (t_eval_obs - t0) / (1.0 + z)   # days since t0 (rest frame)
-
+            phase = (t_eval_obs - t0) / (1.0 + z)
+    
             tpl = {}
             for band, (f_mu, _f_sig) in pred.items():
                 m_app = flux_jy_to_mag(f_mu)
                 M_abs = m_app - DM
-
                 goodp = np.isfinite(phase) & np.isfinite(M_abs)
-                ph_b = phase[goodp]
+                ph_b  = phase[goodp]
                 mag_b = M_abs[goodp]
-
-                # require minimal support
+    
                 if ph_b.size < 5:
                     tpl[band] = {"ph": np.array([], float), "mag": np.array([], float)}
                     continue
-
+    
                 # enforce post-peak positive support for log-time interpolation
                 floor = 1e-4
                 keep_pos = ph_b >= floor
                 if keep_pos.sum() >= 3:
                     ph_b  = ph_b[keep_pos]
                     mag_b = mag_b[keep_pos]
-
+    
                 order = np.argsort(ph_b)
                 tpl[band] = {"ph": ph_b[order], "mag": mag_b[order]}
-
+    
             templates.append(tpl)
             saved_t_grid = phase.tolist() if saved_t_grid is None else saved_t_grid
-
+    
         model = cls(lightcurves=templates, t_grid=saved_t_grid)
-
         if save_to is not None:
             atomic_save_pickle({"lightcurves": model.data, "t_grid": model.t_grid}, save_to)
-
         return model
+
 
     # ---- optional augmentation ----
     def augment(self,
@@ -476,4 +559,108 @@ def atomic_save_pickle(obj, path: Path):
                 os.remove(tmp)
         except Exception:
             pass
+
+#--------------------------------
+# Read filters from Sebastian's git
+#--------------------------------
+
+# --- central wavelength definitions (choose one) ---
+def effective_wavelength(lam_A, trans):
+    """
+    λ_eff = ∫ λ T(λ) dλ / ∫ T(λ) dλ  (in Å)
+    """
+    lam = np.asarray(lam_A, float)
+    T   = np.asarray(trans, float)
+    good = np.isfinite(lam) & np.isfinite(T) & (T > 0)
+    if good.sum() < 2: 
+        return np.nan
+    num = np.trapz(lam[good] * T[good], lam[good])
+    den = np.trapz(T[good], lam[good])
+    return num / den if den > 0 else np.nan
+
+def pivot_wavelength(lam_A, trans):
+    """
+    λ_p = sqrt( ∫ T(λ) λ dλ  /  ∫ T(λ) dλ/λ )  (in Å)
+    More robust across SED differences; commonly used in synthetic photometry.
+    """
+    lam = np.asarray(lam_A, float)
+    T   = np.asarray(trans, float)
+    good = np.isfinite(lam) & np.isfinite(T) & (T > 0)
+    if good.sum() < 2:
+        return np.nan
+    num = np.trapz(T[good] * lam[good], lam[good])
+    den = np.trapz(T[good] / lam[good], lam[good])
+    return np.sqrt(num / den) if den > 0 else np.nan
+
+
+def _read_filter_file(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Reads a 2-column filter file (wavelength, throughput).
+    Tries space/tab CSV, falls back to pandas if needed.
+    Returns arrays in Å and unitless throughput in [0,1] (not enforced).
+    """
+    txt = path.read_text(errors="ignore")
+    # drop comment lines
+    lines = [ln for ln in txt.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    # try fast numpy load
+    try:
+        arr = np.loadtxt(lines)
+        if arr.ndim == 1 and arr.size >= 2:
+            arr = arr.reshape(-1, 2)
+        lam, T = arr[:, 0], arr[:, 1]
+        return lam, T
+    except Exception:
+        # fallback: pandas with flexible separators
+        df = pd.read_csv(path, comment="#", header=None, delim_whitespace=True)
+        if df.shape[1] < 2:
+            # try comma
+            df = pd.read_csv(path, comment="#", header=None)
+        lam = df.iloc[:, 0].to_numpy(dtype=float, copy=False)
+        T   = df.iloc[:, 1].to_numpy(dtype=float, copy=False)
+        return lam, T
+
+
+def _name_from_filename(path: Path) -> str:
+    """
+    Turn filenames into short filter keys; you can tune this.
+    e.g., 'decam_g.txt' -> 'decam_g', 'swift_UVW1.dat' -> 'swift_uvw1'
+    """
+    stem = path.stem.lower()
+    stem = re.sub(r"[^a-z0-9_+.-]+", "", stem)
+    stem = stem.replace("+", "")  # clean things like 'UVM2+atm'
+    return stem
+
+
+def build_filter_map_from_curves(
+    filters_dir: Path,
+    *,
+    which_central: str = "pivot",  # "pivot" or "effective"
+    glob_pattern: str = "*.*",     # match all files under that folder
+    min_points: int = 5
+) -> dict[str, float]:
+    """
+    Scan a directory of filter transmission files and compute a central λ (Å) for each.
+    """
+    filters_dir = Path(filters_dir)
+    files = sorted(filters_dir.glob(glob_pattern))
+    out: dict[str, float] = {}
+
+    for f in files:
+        try:
+            lam, T = _read_filter_file(f)
+            if len(lam) < min_points:
+                continue
+            if which_central == "pivot":
+                lam0 = pivot_wavelength(lam, T)
+            else:
+                lam0 = effective_wavelength(lam, T)
+            if np.isfinite(lam0):
+                out[_name_from_filename(f)] = float(lam0)
+        except Exception as e:
+            warnings.warn(f"[filter read] {f.name}: {e!r}")
+            continue
+
+    if not out:
+        warnings.warn(f"No usable filters found under {filters_dir}")
+    return out
 

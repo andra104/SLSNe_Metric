@@ -104,6 +104,7 @@ def to_export(df_raw: pd.DataFrame) -> pd.DataFrame:
 
     ul = coerce_bool(df["UL"])           # True = upper limit
     detected = (~ul).astype(np.int8)
+    System = df["System"].astype("string").map(lambda s: s.strip() if isinstance(s, str) else s)
 
     # *** PRESERVE FILTER STRINGS relatively AS IN SOURCE ***
     filt = df["Filter"].astype("string").map(lambda s: s.strip() if isinstance(s, str) else s)
@@ -114,6 +115,7 @@ def to_export(df_raw: pd.DataFrame) -> pd.DataFrame:
         "mag_err": mag_err,
         "UL": ul,
         "filter": filt,
+        "System": System,
         "detected": detected
     }).sort_values("mjd").reset_index(drop=True)
 
@@ -126,6 +128,7 @@ def to_export(df_raw: pd.DataFrame) -> pd.DataFrame:
     "mag_err": "float64",
     "UL": "boolean",           # pandas Nullable Boolean
     "filter": "string",
+    "System": "string",
     "detected": "int8",
 })
 

@@ -3,7 +3,8 @@
 from __future__ import annotations
 import re
 from rubin_sim.maf.metrics import BaseMetric
-
+from rubin_sim.maf.slicers import UserPointsSlicer
+from dustmaps.sfd import SFDQuery
 #from rubin_sim.utils import uniformSphere
 #from rubin_sim.data import get_data_dir
 from rubin_scheduler.data import get_data_dir #local
@@ -14,6 +15,8 @@ import sys
 import pyarrow
 import unicodedata
 from collections import Counter
+from shared_utils import sample_rate_from_volume  # Add this to your existing import line
+from rubin_sim.phot_utils import Sed, Bandpass
 
 
 import os
@@ -52,9 +55,44 @@ from functools import partial
 # Cosmology & units for DM(z) and rest-frame scaling
 import astropy.units as u
 from astropy.cosmology import Planck18 as cosmo
-
+from shared_utils import (equatorialFromGalactic, uniform_sphere_degrees, 
+                         inject_uniform_healpix, apply_spectral_index, 
+                         evaluate, compare_flux_diff_to_error,
+                         sample_rate_from_volume) 
 
 DEBUG = False
+dust_model = DustValues()
+
+
+# Cache Rubin bandpasses once per process
+
+_LSST_BANDS = None
+def _get_lsst_bands():
+    global _LSST_BANDS
+    if _LSST_BANDS is None:
+        thru_dir = os.path.join(get_data_dir(), "throughputs", "baseline")
+        bands = {}
+        for b in "ugrizy":
+            bp = Bandpass()
+            bp.read_throughput(os.path.join(thru_dir, f"total_{b}.dat"))
+            bands[b] = bp
+        _LSST_BANDS = bands
+    return _LSST_BANDS
+    
+
+_Z_INTERP_TABLE = None
+
+def _get_z_from_comoving_fast(d_cm_array, z_min=0.001, z_max=10, n_points=10000):
+    """Fast z(d_comoving) lookup via pre-computed interpolation."""
+    global _Z_INTERP_TABLE
+    
+    if _Z_INTERP_TABLE is None:
+        z_grid = np.logspace(np.log10(z_min), np.log10(z_max), n_points)
+        d_grid = cosmo.comoving_distance(z_grid).value
+        _Z_INTERP_TABLE = (d_grid, z_grid)
+    
+    d_grid, z_grid = _Z_INTERP_TABLE
+    return np.interp(d_cm_array, d_grid, z_grid)
 
 #------------------------------------------------------------------------
 #------------------------------------------------------------------------
@@ -65,36 +103,85 @@ DEBUG = False
 #------------------------------------------------------------------------
 
 
-user_filter_map = {
-    "b": 4332.70,
-    "c": 5627.80,
-    "f475w": 4708.87,
-    "f625w": 6266.20,
-    "f775w": 7652.44,
-    "f850lp": 9004.99,
-    "g": 4671.78,
-    "h": 16230.17,
-    "i": 7682.36,
-    "j": 12317.97,
-    "k": 21682.12,
-    "ks": 21454.68,
-    "r": 6141.12,
-    "rs": 6734.34,
-    "u": 3608.04,
-    "uvm2": 2245.03,
-    "uvw1": 2681.67,
-    "uvw2": 2083.95,
-    "v": 3878.68,
-    "w1": 33526.00,
-    "w2": 46028.00,
-    "y": 9613.60,
-    "cyan": 5182.42,
-    "orange": 6629.82,
-    "w": 5980.70,
-    "z": 8906.54,}
+
 
 # Speed of light (m/s)
+# -------- SED helpers consistent with saved sed_grid --------
 _C_MS = 2.99792458e8
+_C_CM_S = 2.99792458e10        # cm/s
+_A_TO_CM = 1e-8                 # 1 Å = 1e-8 cm
+_JY_TO_CGS = 1e-23              # 1 Jy = 1e-23 erg/s/cm^2/Hz
+
+def _interp_Fnu_abs_at_phase(sed_grid: dict, phase_rest: float):
+    """
+    Interpolate the stored absolute rest-frame SED at a given phase.
+
+    sed_grid keys:
+      - 'phase'      : 1D array (days, rest frame)
+      - 'lam_rest_A' : 1D array (Å, rest frame)
+      - 'Fnu_abs'    : 2D array [N_phase, N_lambda] in Jy at 10 pc (rest-frame Fν)
+
+    Returns
+    -------
+    lam_rest_A : (N_lambda,) Å
+    Fnu_abs    : (N_lambda,) Jy at 10 pc
+    """
+    ph = np.asarray(sed_grid["phase"], float)
+    lam_rest_A = np.asarray(sed_grid["lam_rest_A"], float)
+    Fnu_abs_grid = np.asarray(sed_grid["Fnu_abs"], float)  # shape (Nt, Nλ)
+
+    if not (np.isfinite(phase_rest) and ph.min() <= phase_rest <= ph.max()):
+        return None, None
+
+    # Interpolate along the phase axis for every wavelength bin
+    Fnu_abs = np.empty_like(lam_rest_A, dtype=float)
+    for j in range(lam_rest_A.size):
+        Fnu_abs[j] = np.interp(phase_rest, ph, Fnu_abs_grid[:, j], left=np.nan, right=np.nan)
+
+    return lam_rest_A, Fnu_abs
+
+
+def synthesize_mag_at_z(sed_grid: dict, phase_rest: float, z: float, filt: str) -> float:
+    """
+    Throughput-integrated apparent AB magnitude in Rubin filter 'filt' at redshift z.
+
+    Uses your saved absolute rest-frame SED (Fν at 10 pc), transforms to *observed*
+    Fλ at Earth for the target z, and integrates with the LSST bandpass.
+    """
+    bands = _get_lsst_bands()
+    if filt not in bands:
+        return np.nan
+
+    lam_rest_A, Fnu_abs_10pc = _interp_Fnu_abs_at_phase(sed_grid, phase_rest)
+    if lam_rest_A is None:
+        return np.nan
+
+    # observed frame λ
+    lam_obs_A  = lam_rest_A * (1.0 + z)
+    lam_obs_cm = lam_obs_A * _A_TO_CM
+
+    DL_pc = cosmo.luminosity_distance(float(z)).to_value(u.pc)
+    scale = (DL_pc / 10.0)**2 * (1.0 + z)
+    Fnu_obs_Jy  = Fnu_abs_10pc / scale
+    Fnu_obs_cgs = Fnu_obs_Jy * _JY_TO_CGS
+
+    # Fλ = Fν c / λ^2  (λ in cm)
+    Flambda_obs = Fnu_obs_cgs * (_C_CM_S / (lam_obs_cm**2))  # erg/s/cm^2/Å
+
+    # overlap check with LSST bandpass
+    bp = bands[filt]
+    wmin, wmax = float(np.nanmin(bp.wavelen)), float(np.nanmax(bp.wavelen))
+    if (np.nanmax(lam_obs_A) < wmin) or (np.nanmin(lam_obs_A) > wmax):
+        return np.nan
+
+    # integrate
+    sed = Sed(wavelen=lam_obs_A, flambda=Flambda_obs)
+    try:
+        mag = float(sed.calc_mag(bp))  # AB mag
+    except Exception:
+        mag = np.nan
+    return mag
+
 
 # AB system
 F0_JY = 3631.0
@@ -981,33 +1068,32 @@ class LC:
     """
 
     def __init__(self, num_lightcurves=None, load_from=None,
-                     lightcurves=None, t_grid=None, names=None):
-            if lightcurves is not None:
-                self.data   = lightcurves
-                self.t_grid = t_grid
-                # NEW: names passed directly (may be None)
-                self.names  = names if names is not None else [f"tpl_{i}" for i in range(len(self.data))]
-            elif load_from:
-                if not os.path.exists(load_from):
-                    raise FileNotFoundError(f"SLSN templates not found: {load_from}")
-                with open(load_from, "rb") as f:
-                    obj = pickle.load(f)
-                if "lightcurves" not in obj:
-                    raise ValueError("templates.pkl missing key 'lightcurves'")
-                self.data   = obj["lightcurves"]
-                self.t_grid = obj.get("t_grid", None)
-                # NEW: load names from pickle, fallback if missing
-                self.names  = obj.get("names", [f"tpl_{i}" for i in range(len(self.data))])
-            else:
-                self.data, self.t_grid = [], None
-                self.names = []
-    
-            # discover bands (unchanged)
-            self.filts = []
-            for tpl in (self.data or []):
-                if isinstance(tpl, dict) and tpl:
-                    self.filts = sorted(tpl.keys())
-                    break
+                 lightcurves=None, t_grid=None, names=None):
+        if lightcurves is not None:
+            self.data   = lightcurves
+            self.t_grid = t_grid
+            self.names  = names if names is not None else [f"tpl_{i}" for i in range(len(self.data))]
+            # new fields when constructed in-memory
+            self.template_file = None
+            self.sed_grid = None
+        elif load_from:
+            if not os.path.exists(load_from):
+                raise FileNotFoundError(f"SLSN templates not found: {load_from}")
+            with open(load_from, "rb") as f:
+                obj = pickle.load(f)
+            if "lightcurves" not in obj:
+                raise ValueError("templates.pkl missing key 'lightcurves'")
+            self.data   = obj["lightcurves"]
+            self.t_grid = obj.get("t_grid", None)
+            self.names  = obj.get("names", [f"tpl_{i}" for i in range(len(self.data))])
+            # NEW: remember where this came from + keep sed_grid in memory
+            self.template_file = load_from
+            self.sed_grid = obj.get("sed_grid", None)
+        else:
+            self.data, self.t_grid = [], None
+            self.names = []
+            self.template_file = None
+            self.sed_grid = None
 
     def interp(self, t, filtername, lc_indx=0):
         """Interpolate absolute magnitude at rest-frame phase t (days) in `filtername`."""
@@ -1079,10 +1165,8 @@ class LC:
         peak_col = inputs.peak_mjd_col if inputs.peak_mjd_col in params.columns else None
 
         # inside LC.from_catalog, before the loop
-        sed_grid = []   # <--- new
-        templates: list[dict] = []
-        names: list[str] = []
-        meta: list[dict] = []    # <--- NEW
+        templates, names, meta, sed_grid = [], [], [], []
+        t0_cat_list, t0_data_list, z_used, dm_list = [], [], [], []
         saved_t_grid = None
 
         for _, row in params.iterrows():
@@ -1176,6 +1260,10 @@ class LC:
                 mag=mag,
             )
 
+            t0_cat_list.append(float(t0_info.get("t0_cat", np.nan)))
+            t0_data_list.append(float(t0_used))
+            z_used.append(float(z))
+            dm_list.append(float(dm_from_z(z)))
             
             # evaluation grid (observed frame) centered on t0_used
             t_eval_obs = np.linspace(t0_used - tpad_pre_days, t0_used + tpad_post_days, n_time)
@@ -1281,10 +1369,10 @@ class LC:
             templates.append(tpl)
             sed_grid.append(sed_entry)
             names.append(name)
-            t0_cat_list.append(float(row[peak_col]) if (peak_col is not None and np.isfinite(row[peak_col])) else np.nan)
-            t0_data_list.append(float(t0))
-            z_used.append(float(z))
-            dm_list.append(float(dm_from_z(z)))
+            #t0_cat_list.append(float(row[peak_col]) if (peak_col is not None and np.isfinite(row[peak_col])) else np.nan)
+            #t0_data_list.append(float(t0))
+            #z_used.append(float(z))
+            #dm_list.append(float(dm_from_z(z)))
 
 
             if saved_t_grid is None:
@@ -1292,6 +1380,8 @@ class LC:
 
         # Build once, save (with names), and return the same instance
         model = cls(lightcurves=templates, t_grid=saved_t_grid, names=names)
+        model.sed_grid = sed_grid
+
         if save_to is not None:
             atomic_save_pickle({
                 "lightcurves": templates,
@@ -1305,9 +1395,103 @@ class LC:
                     "t0_data": t0_data_list,
                 }
             }, save_to)
+            model.template_file = str(save_to)
 
 
         return model
+
+    def build_magnitude_grid(self, 
+                             z_grid=None, 
+                             phase_grid=None,
+                             filters='ugrizy',
+                             save_to=None):
+        """
+        Pre-compute LSST apparent magnitudes on a (template, z, phase, filter) grid.
+        
+        This replaces thousands of on-the-fly SED syntheses with fast 2D interpolation.
+        Takes ~5-10 minutes to build once, then all simulations are 100x+ faster.
+        
+        Parameters
+        ----------
+        z_grid : array-like, optional
+            Redshift sampling points. Default: 50 points from 0.02 to 2.0
+        phase_grid : array-like, optional
+            Rest-frame phase sampling (days). Default: 0.1 to 160 days (log-spaced)
+        filters : str or list
+            LSST filters to pre-compute
+        save_to : Path, optional
+            If provided, save grid to disk for reuse
+        """
+        print("[build_magnitude_grid] Starting pre-computation...")
+        
+        if z_grid is None:
+            z_grid = np.linspace(0.02, 2.0, 50)
+        if phase_grid is None:
+            # Log-spaced to match template support
+            phase_grid = np.geomspace(0.1, 160, 200)
+        
+        z_grid = np.asarray(z_grid, float)
+        phase_grid = np.asarray(phase_grid, float)
+        
+        if isinstance(filters, str):
+            filters = list(filters)
+        
+        n_templates = len(self.sed_grid)
+        n_z = len(z_grid)
+        n_phase = len(phase_grid)
+        
+        # Storage: [n_templates, n_filters, n_z, n_phase]
+        self.mag_grid = {}
+        for filt in filters:
+            self.mag_grid[filt] = np.full((n_templates, n_z, n_phase), np.nan, dtype=np.float32)
+        
+        # Pre-compute for all templates
+        from tqdm.auto import tqdm
+        for i_tpl in tqdm(range(n_templates), desc="Templates"):
+            sed = self.sed_grid[i_tpl]
+            
+            for i_z, z in enumerate(z_grid):
+                for filt in filters:
+                    # Vectorized: compute all phases at once for this (template, z, filter)
+                    mags = np.array([
+                        synthesize_mag_at_z(sed, phase, z, filt) 
+                        for phase in phase_grid
+                    ])
+                    self.mag_grid[filt][i_tpl, i_z, :] = mags
+        
+        # Store grid axes for interpolation
+        self.mag_grid_axes = {
+            'z': z_grid,
+            'phase': phase_grid
+        }
+        
+        print(f"[build_magnitude_grid] Complete. Grid shape per filter: "
+              f"{self.mag_grid[filters[0]].shape}")
+        
+        if save_to:
+            grid_data = {
+                'mag_grid': self.mag_grid,
+                'mag_grid_axes': self.mag_grid_axes,
+                'filters': filters
+            }
+            atomic_save_pickle(grid_data, save_to)
+            print(f"[build_magnitude_grid] Saved to {save_to}")
+        
+        return self
+
+    def load_magnitude_grid(self, grid_file):
+        """Load pre-computed magnitude grid from disk."""
+        if not os.path.exists(grid_file):
+            raise FileNotFoundError(f"Grid file not found: {grid_file}")
+        
+        with open(grid_file, 'rb') as f:
+            grid_data = pickle.load(f)
+        
+        self.mag_grid = grid_data['mag_grid']
+        self.mag_grid_axes = grid_data['mag_grid_axes']
+        
+        print(f"[load_magnitude_grid] Loaded grid with filters: {list(self.mag_grid.keys())}")
+        return self
 
 
 # ----------------------------
@@ -2032,65 +2216,782 @@ def _trapz_norm(lam, T):
     if good.sum() < 2: return 1.0
     return np.trapz(T[good], lam[good])
 
-def synthesize_mag_at_z(templates_file: Path, template_idx: int,
-                        filt_lam_obs_A: np.ndarray, filt_T: np.ndarray,
-                        z_target: float, phase_rest: np.ndarray,
-                        extinction_Av: float | None = None,
-                        Rv: float = 3.1) -> tuple[np.ndarray, np.ndarray]:
+
+
+def _m52snr(mag: np.ndarray, m5: np.ndarray) -> np.ndarray:
     """
-    Return (phase_rest, m_AB) for a chosen filter at a target redshift using the stored sed_grid.
-    filt_lam_obs_A, filt_T: observed-frame filter curve (Å, unitless T).
+    LSST single-visit SNR from 5σ depth. SNR ≈ 5 * 10^{0.4 (m5 - m)}.
+    """
+    snr = np.full_like(mag, np.nan, dtype=float)
+    finite = np.isfinite(mag) & np.isfinite(m5)
+    snr[finite] = 5.0 * (10.0 ** (0.4 * (m5[finite] - mag[finite])))
+    return snr
+
+def _phase_key(phase_rest, step=0.2):
+    # 0.05 d grid; adjust to 0.02 if you need a bit finer
+    return float(np.round(phase_rest/step)*step)
+
+def synthesize_mag_at_z_cached(cache, sed_grid, phase_rest, z, filt):
+    key = (id(sed_grid), filt, _phase_key(phase_rest), round(float(z), 5))
+    if key in cache:
+        return cache[key]
+    val = synthesize_mag_at_z(sed_grid, phase_rest, z, filt)  # your integrated method (now uses calc_mag/correct API)
+    cache[key] = val
+    return val
+
+def _project_template_to_lsst_abs(metric, sed_grid, z):
+    """
+    Returns dict: {'phase': phase, 'u': M_u(phase), ...} cached on metric._proj_cache
+    """
+    cache = getattr(metric, "_proj_cache", None)
+    if cache is None:
+        cache = {}
+        setattr(metric, "_proj_cache", cache)
+    key = (id(sed_grid), round(float(z),5))
+    if key in cache:
+        return cache[key]
+
+    bands = _get_lsst_bands()
+    phase = np.asarray(sed_grid["phase"], float)
+    lam_rest = np.asarray(sed_grid["lam_rest_A"], float)
+    Fnu_abs = np.asarray(sed_grid["Fnu_abs"], float)  # shape (nphase, nlam)
+
+    out = {"phase": phase}
+    for f,bp in bands.items():
+        # build a rest-frame bandpass sampled on lam_rest grid
+        # sample T_obs at lam_obs = (1+z)*lam_rest
+        lam_obs = (1.0 + z) * lam_rest
+        # Interpolate bp throughput onto lam_obs, then reuse on lam_rest domain
+        # (Bandpass exposes arrays; we use numpy interp.)
+        T_obs = np.interp(lam_obs, bp.wavelen, bp.sb, left=0.0, right=0.0)
+
+        # Convert Fnu_abs(ν) -> Flambda_abs(λ) for integration with T(λ)
+        # Fλ = Fν * c / λ^2 ; λ in meters for unit-consistency, but relative constant cancels in AB mag calc_mag.
+        lam_m = lam_rest * 1e-10
+        Flambda = Fnu_abs * (2.99792458e8) / (lam_m**2)
+
+        # Build a Sed per phase is costly; integrate directly to AB is non-trivial.
+        # Pragmatic: build a Sed once per phase with (lam_rest, Flambda) and use a synthetic Bandpass with (lam_rest, T_obs).
+        from rubin_sim.phot_utils import Bandpass, Sed
+        bp_rest = Bandpass(wavelen=lam_rest, sb=T_obs)
+        M = np.full_like(phase, np.nan, float)
+        for i in range(len(phase)):
+            sed = Sed(wavelen=lam_rest, flambda=Flambda[i])
+            try:
+                M[i] = float(sed.calc_mag(bp_rest))
+            except Exception:
+                M[i] = np.nan
+        out[f] = M
+
+    cache[key] = out
+    return out
+
+def evaluate(metric, dataSlice, slice_point, return_full_obs=False):
+    """
+    SLSN-specific evaluate using pre-computed magnitude grid for speed.
+    Falls back to on-the-fly synthesis if grid unavailable (but warns).
+    """
+    use_grid = hasattr(metric.lc_model, 'mag_grid') and metric.lc_model.mag_grid
+    
+    if not use_grid:
+        warnings.warn(
+            "No magnitude grid found on lc_model. "
+            "Falling back to slow SED synthesis. "
+            "Run lc_model.build_magnitude_grid() once to speed up by 100x+",
+            RuntimeWarning
+        )
+    
+    # Get SED grid
+    sed_grid_all = getattr(metric.lc_model, 'sed_grid', None)
+    if sed_grid_all is None:
+        template_path = getattr(metric.lc_model, 'template_file', None)
+        if template_path is None:
+            raise AttributeError("LC object missing both sed_grid and template_file")
+        with open(template_path, 'rb') as f:
+            templates = pickle.load(f)
+        sed_grid_all = templates['sed_grid']
+        metric.lc_model.sed_grid = sed_grid_all
+    
+    # Bounds-checked template index
+    tpl_idx = int(slice_point['file_indx'])
+    tpl_idx = max(0, min(tpl_idx, len(sed_grid_all) - 1))
+    sed_grid = sed_grid_all[tpl_idx]
+    
+    z   = float(slice_point['z'])
+    t0  = float(slice_point['peak_time'])
+    dm  = float(slice_point.get('distance_modulus', cosmo.distmod(z).value))
+    ebv = float(slice_point.get('ebv', 0.0))
+    
+    dust_model_cached = getattr(metric, 'dust_model', None) or DustValues()
+    setattr(metric, 'dust_model', dust_model_cached)
+    
+    # Extract arrays
+    names = dataSlice.dtype.names or ()
+    filters = dataSlice[metric.filterCol].astype(str)
+    mjds    = dataSlice[metric.mjdCol].astype(float)
+    m5s     = dataSlice[metric.m5Col].astype(float) if metric.m5Col in names else np.full(len(dataSlice), np.nan)
+    
+    phase_rest = (mjds - t0) / (1.0 + z)
+    
+    # ========== FAST PATH: Grid Interpolation ==========
+    if use_grid:
+        from scipy.interpolate import RegularGridInterpolator
+        
+        z_grid = metric.lc_model.mag_grid_axes['z']
+        phase_grid = metric.lc_model.mag_grid_axes['phase']
+        
+        mags = np.full(len(dataSlice), np.nan, dtype=float)
+        
+        for filt in np.unique(filters):
+            mask = (filters == filt)
+            if not np.any(mask):
+                continue
+            
+            if filt not in metric.lc_model.mag_grid:
+                continue
+            
+            grid_3d = metric.lc_model.mag_grid[filt][tpl_idx, :, :]  # Now tpl_idx is safe
+            
+            interp = RegularGridInterpolator(
+                (z_grid, phase_grid),
+                grid_3d,
+                bounds_error=False,
+                fill_value=np.nan,
+                method='linear'
+            )
+            
+            phases_f = phase_rest[mask]
+            z_repeated = np.full_like(phases_f, z)
+            points = np.column_stack([z_repeated, phases_f])
+            
+            mags[mask] = interp(points)
+        
+        mags = mags + dm
+        
+    # ========== SLOW PATH: Synthesis ==========
+    else:
+        phase_keys = np.array([_phase_key(p) for p in phase_rest])
+        uniq_pairs, inv = np.unique(
+            np.stack([filters, phase_keys], axis=1),
+            axis=0, return_inverse=True
+        )
+        
+        mag_abs_uniq = np.full(len(uniq_pairs), np.nan, float)
+        for k, (filt_k, pkey) in enumerate(uniq_pairs):
+            mag_abs_uniq[k] = synthesize_mag_at_z_cached(
+                metric._mag_cache, sed_grid, float(pkey), z, filt_k
+            )
+        
+        mag_abs = mag_abs_uniq[inv]
+        mags = mag_abs + dm
+    
+    # ========== Common Post-Processing ==========
+    # Extinction
+    if ebv != 0.0:
+        ax1 = dust_model_cached.ax1
+        mags = mags + np.array([ax1.get(f, 0.0) for f in filters]) * ebv
+    
+    # SNR
+    snr = _m52snr(mags, m5s)
+    
+    if not return_full_obs:
+        return snr, filters, mjds, None
+    
+    # Build obs_record dict
+    obs_record = {
+        "filter": filters.tolist() if isinstance(filters, np.ndarray) else list(filters),
+        "mjd_obs": mjds.tolist() if isinstance(mjds, np.ndarray) else list(mjds),
+        "mag_obs": mags.tolist() if isinstance(mags, np.ndarray) else list(mags),
+        "snr_obs": snr.tolist() if isinstance(snr, np.ndarray) else list(snr),
+        "phase_rest": phase_rest.tolist() if isinstance(phase_rest, np.ndarray) else list(phase_rest),
+    }
+    
+    return snr, filters, mjds, obs_record
+# ------- 
+
+def compute_slsn_properties(df_cov, templates_file):
+    """
+    Compute SLSN-specific observable properties from templates.
     """
     import pickle
-    with open(templates_file, "rb") as f:
+    import numpy as np
+    
+    with open(templates_file, 'rb') as f:
         obj = pickle.load(f)
-    sed = obj["sed_grid"][template_idx]
-    phase0 = np.asarray(sed["phase"], float)                     # rest-frame
-    lam_rest = np.asarray(sed["lam_rest_A"], float)              # rest-frame Å
-    Fnu_abs = np.asarray(sed["Fnu_abs"], float)                  # shape (n_phase, n_lambda)
+    
+    lcs = obj['lightcurves']
+    
+    rows = []
+    for i, tpl in enumerate(lcs):
+        row = {'tpl_idx': i}
+        
+        # Get r-band curve
+        if 'r' in tpl and isinstance(tpl['r'], dict):
+            ph = np.asarray(tpl['r']['ph'], float)
+            mag = np.asarray(tpl['r']['mag'], float)
+            
+            if len(ph) > 5:
+                # Peak absolute magnitude
+                peak_idx = np.argmin(mag)
+                row['M_peak_r'] = float(mag[peak_idx])
+                
+                # Decline rate: 15-50 days post-peak
+                post = (ph > 0) & (ph >= 15) & (ph <= 50)
+                if post.sum() >= 3:
+                    from scipy.stats import linregress
+                    slope, _, _, _, _ = linregress(ph[post], mag[post])
+                    row['decline_rate_r'] = float(slope)
+                
+                # Width at M_peak + 1 mag
+                thresh = row['M_peak_r'] + 1.0
+                above = mag < thresh
+                if above.sum() >= 2:
+                    row['width_r'] = float(ph[above].max() - ph[above].min())
+        
+        # g-r color at peak
+        if 'g' in tpl and 'r' in tpl:
+            g_mag = np.asarray(tpl['g']['mag'], float)
+            g_ph = np.asarray(tpl['g']['ph'], float)
+            r_mag = np.asarray(tpl['r']['mag'], float)
+            r_ph = np.asarray(tpl['r']['ph'], float)
+            
+            # Find mags closest to phase=0
+            if len(g_ph) > 0 and len(r_ph) > 0:
+                g_near_peak = g_mag[np.argmin(np.abs(g_ph))]
+                r_near_peak = r_mag[np.argmin(np.abs(r_ph))]
+                row['g_minus_r'] = float(g_near_peak - r_near_peak)
+        
+        rows.append(row)
+    
+    df_props = pd.DataFrame(rows)
+    
+    # Merge with coverage info
+    return df_cov.merge(df_props, on='tpl_idx', how='left')
 
-    # Shift rest SED to observed frame at z_target: lam_obs = (1+z_tar)*lam_rest
-    lam_obs = (1.0 + z_target) * lam_rest[None, :]               # broadcast
-    # Interpolate SED (per phase) onto the filter λ grid
-    lam_f = np.asarray(filt_lam_obs_A, float)
-    T_f   = np.asarray(filt_T, float)
-    T_norm = _trapz_norm(lam_f, T_f)
+# --------
 
-    # Convert absolute (10pc) Fν_rest to observed apparent Fν at z_target:
-    #   Fν_obs = Fν_abs / ((DL(z_tar)/10pc)^2 * (1+z_tar))
-    DL_tar_pc = cosmo.luminosity_distance(z_target).to_value(u.pc)
-    inv_scale = 1.0 / ((DL_tar_pc/10.0)**2 * (1.0 + z_target))
-    # Sample per phase onto filter grid and integrate
-    from numpy import interp, trapz, log10
-    m_AB = np.full(phase_rest.shape, np.nan, float)
+def characterize_template_coverage(templates_file, save_summary=True):
+    """Fast summary of template characteristics."""
+    import pickle
+    import pandas as pd
+    import numpy as np
+    
+    with open(templates_file, 'rb') as f:
+        obj = pickle.load(f)
+    
+    lcs = obj['lightcurves']
+    names = obj.get('names', [f'tpl_{i}' for i in range(len(lcs))])
+    meta = obj.get('meta', {})  # Dict with keys: z, dm, t0_cat, t0_data
+    
+    # Extract meta arrays (NOT indexing meta directly)
+    z_arr = meta.get('z', [])
+    dm_arr = meta.get('dm', [])
+    t0_cat_arr = meta.get('t0_cat', [])
+    t0_data_arr = meta.get('t0_data', [])
+    
+    rows = []
+    for i, (name, tpl) in enumerate(zip(names, lcs)):
+        row = {
+            'tpl_idx': i, 
+            'name': name,
+            'z': z_arr[i] if i < len(z_arr) else np.nan,
+            'dm': dm_arr[i] if i < len(dm_arr) else np.nan,
+            't0_cat': t0_cat_arr[i] if i < len(t0_cat_arr) else np.nan,
+            't0_data': t0_data_arr[i] if i < len(t0_data_arr) else np.nan,
+        }
+        
+        # Count bands
+        bands = [b for b, d in tpl.items() 
+                 if isinstance(d, dict) and 'ph' in d and 'mag' in d and len(d['ph']) > 0]
+        row['n_bands'] = len(bands)
+        row['bands'] = ','.join(sorted(bands))
+        
+        # Get reference band characteristics
+        for check_band in ['r', 'g', 'i']:
+            if check_band in tpl and isinstance(tpl[check_band], dict):
+                ph = np.asarray(tpl[check_band].get('ph', []), float)
+                mag = np.asarray(tpl[check_band].get('mag', []), float)
+                if len(ph) > 0:
+                    row['ref_band'] = check_band
+                    row['phase_min'] = float(ph.min())
+                    row['phase_max'] = float(ph.max())
+                    row['phase_span'] = float(ph.max() - ph.min())
+                    row['n_phases'] = len(ph)
+                    row['mag_peak'] = float(mag[np.argmin(np.abs(ph))])
+                    break
+        
+        rows.append(row)
+    
+    df = pd.DataFrame(rows)
+    
+    if save_summary:
+        summary_path = templates_file.parent / f"{templates_file.stem}_coverage_summary.csv"
+        df.to_csv(summary_path, index=False)
+        print(f"Saved to {summary_path}")
+    
+    return df
 
-    # Interp along phase axis (so caller can pick arbitrary phase_rest)
-    # 1) Interp absolute SED onto requested phases (bilinear in phase, nearest in lambda via 1D interp per phase)
-    # First, for each requested phase, get Fnu_abs(phase, lam_rest)
-    # linear interp along phase:
-    def interp_phase(F2D, x_old, x_new):
-        return np.vstack([np.interp(x_new, x_old, F2D[:, j], left=np.nan, right=np.nan)
-                          for j in range(F2D.shape[1])]).T  # -> (len(x_new), n_lambda)
+# -------
 
-    F_abs_at_phase = interp_phase(Fnu_abs, phase0, np.asarray(phase_rest, float))  # (nP, nL)
-    # 2) For each phase, convert to observed apparent Fν at z_target and integrate over filter
-    for i in range(F_abs_at_phase.shape[0]):
-        F_abs_row = F_abs_at_phase[i, :]                        # vs lam_rest
-        lam_obs_row = (1.0 + z_target) * lam_rest               # 1D, Å
-        # Interp onto filter λ grid in observed frame
-        F_abs_on_filt = np.interp(lam_f, lam_obs_row, F_abs_row, left=np.nan, right=np.nan)
-        Fnu_obs_on_f  = inv_scale * F_abs_on_filt               # apparent at Earth
-        good = np.isfinite(Fnu_obs_on_f) & np.isfinite(T_f) & (T_f > 0)
-        if good.sum() < 2:
+def assess_literature_coverage(df_cov):
+    """
+    Compare your template distributions to published SLSN samples.
+    """
+    import matplotlib.pyplot as plt
+    
+    # Known SLSN ranges from literature
+    lit_ranges = {
+        'M_peak_r': (-23.0, -19.5),      # Quimby+13
+        'decline_rate_r': (0.005, 0.08), # mag/day, Nicholl+17
+        'g_minus_r': (-0.3, 0.5),        # typical colors
+        'width_r': (20, 80),             # days, Inserra+13
+    }
+    
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    axes = axes.flatten()
+    
+    gaps = {}
+    
+    for ax, (param, (lit_min, lit_max)) in zip(axes, lit_ranges.items()):
+        if param not in df_cov.columns:
+            ax.text(0.5, 0.5, f'{param}\nNo Data', ha='center', va='center')
+            gaps[param] = "no_data"
             continue
-        # AB magnitude via Fν-weighted throughput. For simplicity, treat T as effective in Fν-space:
-        num = trapz(Fnu_obs_on_f[good] * T_f[good], lam_f[good])
-        den = T_norm if T_norm > 0 else 1.0
-        Fnu_eff = num / den
-        if Fnu_eff > 0:
-            m_AB[i] = -2.5 * log10(Fnu_eff / F0_JY)
+        
+        vals = df_cov[param].dropna()
+        if len(vals) == 0:
+            gaps[param] = "no_data"
+            continue
+        
+        # Plot histogram
+        ax.hist(vals, bins=20, alpha=0.7, edgecolor='black', label='Your templates')
+        
+        # Literature range
+        ax.axvline(lit_min, color='red', ls='--', lw=2, label='Lit range')
+        ax.axvline(lit_max, color='red', ls='--', lw=2)
+        ax.axvspan(lit_min, lit_max, alpha=0.2, color='red')
+        
+        # Check coverage
+        obs_min, obs_max = vals.min(), vals.max()
+        left_gap = max(0, lit_min - obs_min)
+        right_gap = max(0, obs_max - lit_max)
+        
+        coverage_frac = np.sum((vals >= lit_min) & (vals <= lit_max)) / len(vals)
+        
+        ax.set_xlabel(param)
+        ax.set_ylabel('Count')
+        ax.set_title(f'{param}\nCoverage: {coverage_frac*100:.0f}% in lit range')
+        ax.legend()
+        
+        # Assess gaps
+        if coverage_frac < 0.5:
+            gaps[param] = "poor_coverage"
+        elif left_gap > 0.2 * (lit_max - lit_min):
+            gaps[param] = "missing_faint_end"
+        elif right_gap > 0.2 * (lit_max - lit_min):
+            gaps[param] = "missing_bright_end"
+        else:
+            gaps[param] = "good"
+    
+    plt.tight_layout()
+    plt.savefig("SLSN_template_coverage_vs_literature.png", dpi=150)
+    plt.show()
+    
+    # Print summary
+    print("\n=== Coverage Assessment ===")
+    for param, status in gaps.items():
+        print(f"{param:20s}: {status}")
+    
+    return gaps
 
-    # Optional: extinction in observed frame (very simple Aλ≈ const per band):
-    # If you want, you can apply a scalar A_band here.
-    return phase_rest, m_AB
+# --------
 
+def find_missing_archetypes(df_cov):
+    """Identify specific SLSN types not well-represented."""
+    missing = []
+    
+    # Check for fast vs slow evolvers
+    if 'decline_rate_r' in df_cov.columns:
+        vals = df_cov['decline_rate_r'].dropna()
+        # CORRECTED: positive slope = declining (getting fainter)
+        fast = vals > 0.05  # >0.05 mag/day decline
+        slow = vals < 0.02  # <0.02 mag/day decline
+        print(f"Fast evolvers (>0.05 mag/day): {fast.sum()}")
+        print(f"Slow evolvers (<0.02 mag/day): {slow.sum()}")
+        if fast.sum() < 10:
+            missing.append("fast_declining")
+        if slow.sum() < 10:
+            missing.append("slow_declining")
+    
+    # Check for bright vs faint
+    if 'M_peak_r' in df_cov.columns:
+        vals = df_cov['M_peak_r'].dropna()
+        bright = vals < -22  # More negative = brighter
+        faint = vals > -20.5
+        print(f"Very bright (M_r < -22): {bright.sum()}")
+        print(f"Faint (M_r > -20.5): {faint.sum()}")
+        if bright.sum() < 10:
+            missing.append("super_luminous")
+        if faint.sum() < 10:
+            missing.append("faint_end")
+    
+    # Check color diversity
+    if 'g_minus_r' in df_cov.columns:
+        vals = df_cov['g_minus_r'].dropna()
+        blue = vals < -0.1
+        red = vals > 0.3
+        print(f"Blue (g-r < -0.1): {blue.sum()}")
+        print(f"Red (g-r > 0.3): {red.sum()}")
+        if blue.sum() < 5:
+            missing.append("very_blue")
+        if red.sum() < 5:
+            missing.append("red_events")
+    
+    if missing:
+        print(f"\nMissing archetypes: {', '.join(missing)}")
+        print("Consider: (1) adding more events to catalog, (2) restricting z_max to improve completeness")
+    else:
+        print("\n✓ Good coverage across major SLSN types")
+    
+    return missing
+
+#---------------
+# Rubin ready 
+# -----------------
+
+class SLSN_Base_Metric(BaseMetric):
+    def __init__(self, metricName='BaseSLSNMetric', 
+                 mjdCol='observationStartMJD', m5Col='fiveSigmaDepth',
+                 filterCol='filter', nightCol='night', mjd0=60980.5,
+                 lc_model=None, use_extinction=True, use_kcorrect=False,
+                 k_correct_type=None, k_correct_arg=None,
+                 **kwargs):
+        
+        if lc_model is None:
+            raise ValueError("lc_model required")
+        
+        self._mag_cache = {} 
+        self.lc_model = lc_model
+        self.ax1 = DustValues().ax1
+        self.mjdCol = mjdCol
+        self.m5Col = m5Col
+        self.filterCol = filterCol
+        self.nightCol = nightCol
+        self.mjd0 = mjd0
+        self.use_extinction = use_extinction
+        self.use_kcorrect = use_kcorrect
+        self.k_correct_type = k_correct_type
+        self.k_correct_arg = k_correct_arg
+        
+        cols = [mjdCol, m5Col, filterCol, nightCol]
+        super().__init__(col=cols, metric_name=metricName, 
+                         units='Detection Efficiency', **kwargs)
+    
+    def detect(self, filters, snr, times, obs_record):
+        """SLSN-specific detection logic matching Base_Metric.detect signature."""
+        mags = np.asarray(obs_record.get('mag_obs', []))
+        return detect_slsn(filters, snr, times, mags, obs_record)
+
+class SLSN_Detect_Metric(SLSN_Base_Metric):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.metricName = kwargs.get('metricName', 'SLSN_Detect')
+        self.obs_records = {}
+
+    def run(self, dataSlice, slice_point=None):
+        # Call evaluate with return_full_obs=True to get the 4-tuple
+        snr, filters, times, obs_record = evaluate(
+            self, dataSlice, slice_point, return_full_obs=True
+        )
+        
+        if obs_record is None or len(snr) == 0:
+            return self.badval
+        
+        # Use the detect method from base class
+        detected = self.detect(filters, snr, times, obs_record)
+        
+        # Add metadata
+        obs_record.update({
+            'detected': bool(detected),
+            'sid_duplicate': slice_point['sid'],
+            'file_indx': slice_point['file_indx'],
+            'z': slice_point['z'],
+            'ra': slice_point['ra'],
+            'dec': slice_point['dec'],
+            'distance_Mpc': slice_point['distance'],
+            'ebv': slice_point['ebv'],
+            'peak_time': slice_point['peak_time'],
+        })
+        
+        self.obs_records[slice_point['sid']] = obs_record
+        return 1.0 if detected else 0.0
+
+
+def generate_SLSN_PopSlicer(lc_model, t_start=1, t_end=3652,
+                            z_min=0.1, z_max=2.0,
+                            rate_density=1e-7,
+                            gal_lat_cut=None,
+                            seed=42,
+                            save_to=None,
+                            load_from=None):
+    """
+    Generate population of SLSNe with redshift-dependent distances.
+    """
+    
+    if load_from and os.path.exists(load_from):
+        with open(load_from, 'rb') as f:
+            slice_data = pickle.load(f)
+        slicer = UserPointsSlicer(ra=slice_data['ra'], dec=slice_data['dec'], badval=0)
+        slicer.slice_points.update(slice_data)
+        print(f"Loaded SLSN population from {load_from}")
+        return slicer  # ← WAS MISSING THIS RETURN
+    
+    rng = np.random.default_rng(seed)
+    
+    # Sample from volumetric rate
+    n_events = sample_rate_from_volume(
+        rate_density=rate_density,
+        t_start=t_start, t_end=t_end,
+        z_min=z_min, z_max=z_max
+    )
+    
+    print(f"Simulating {n_events} SLSNe (rate={rate_density:.1e} Mpc^-3 yr^-1)")
+    
+    # Uniform sky positions
+    nside = 64
+    ra, dec = inject_uniform_healpix(nside, n_events, seed=seed)
+    
+    # Sample redshifts uniformly in comoving volume
+    z_min_cm = cosmo.comoving_distance(z_min).value
+    z_max_cm = cosmo.comoving_distance(z_max).value
+    d_cm = rng.uniform(z_min_cm, z_max_cm, n_events)
+    
+    # Convert back to redshift (vectorized)
+    z_vals = _get_z_from_comoving_fast(d_cm)
+    distances = d_cm  # comoving distance in Mpc
+    
+    # Random template assignment
+    num_templates = len(lc_model.data)
+    file_indx = rng.integers(0, num_templates, n_events)
+    
+    # Peak times uniformly across survey
+    peak_times = rng.uniform(t_start, t_end, n_events)
+    
+    # Extinction
+    coords = SkyCoord(ra * u.deg, dec * u.deg, frame='icrs')
+    sfd = SFDQuery()
+    ebv_vals = sfd(coords)
+    
+    # Build slicer
+    slicer = UserPointsSlicer(ra=ra, dec=dec, badval=0)
+    slicer.slice_points['sid'] = np.arange(n_events)  # ← CRITICAL: ADD THIS
+    slicer.slice_points['z'] = z_vals
+    slicer.slice_points['distance'] = distances
+    slicer.slice_points['distance_modulus'] = np.array([dm_from_z(z) for z in z_vals])
+    slicer.slice_points['peak_time'] = peak_times
+    slicer.slice_points['file_indx'] = file_indx
+    slicer.slice_points['ebv'] = ebv_vals
+    
+    # Store per-filter extinction
+    ax1 = dust_model.ax1
+    for f in ['u','g','r','i','z','y']:
+        slicer.slice_points[f'A_{f}'] = ax1[f] * ebv_vals
+    
+    # ← ADD: Store injected peak magnitudes for run_detect
+    for f in ['u','g','r','i','z','y']:
+        peak_abs = []
+        peak_noebv = []
+        peak_ebv = []
+        
+        for idx, z_val, dm, ebv in zip(file_indx, z_vals, 
+                                        slicer.slice_points['distance_modulus'], 
+                                        ebv_vals):
+            # Get absolute peak from template
+            if f in lc_model.data[idx] and len(lc_model.data[idx][f]['mag']) > 0:
+                M_abs = float(np.min(lc_model.data[idx][f]['mag']))
+            else:
+                M_abs = np.nan
+            
+            m_noebv = M_abs + dm
+            m_ebv = m_noebv + ax1[f] * ebv
+            
+            peak_abs.append(M_abs)
+            peak_noebv.append(m_noebv)
+            peak_ebv.append(m_ebv)
+        
+        slicer.slice_points[f'peak_mag_abs_{f}'] = np.array(peak_abs)
+        slicer.slice_points[f'peak_app_mag_noebv_{f}'] = np.array(peak_noebv)
+        slicer.slice_points[f'peak_app_mag_ebv_{f}'] = np.array(peak_ebv)
+    
+    if save_to:
+        atomic_save_pickle(dict(slicer.slice_points), save_to)
+        print(f"Saved SLSN population to {save_to}")
+    
+    return slicer
+
+def detect_slsn(filters, snr, times, mags, obs_record):
+    """
+    SLSN detection criterion following Firth+2015.
+    
+    Returns True if:
+    1. ≥2 filters with SNR≥5 detections
+    2. Rising light curve observed (at least one pair showing brightening)
+    3. Observations span ≥15 days
+    """
+    
+    # Criterion 1: Multi-band detection
+    detected_filters = []
+    for f in np.unique(filters):
+        mask = (filters == f) & (snr >= 5)
+        if np.sum(mask) >= 1:
+            detected_filters.append(f)
+    
+    if len(detected_filters) < 2:
+        return False
+    
+    # Criterion 2: Observe rising light curve
+    # SLSNe rise for ~20-40 days, so we need to catch the rise
+    rising_observed = False
+    for f in detected_filters:
+        mask = (filters == f) & (snr >= 5)
+        t_filt = times[mask]
+        m_filt = mags[mask]
+        
+        if len(t_filt) >= 2:
+            # Sort by time
+            order = np.argsort(t_filt)
+            t_sorted = t_filt[order]
+            m_sorted = m_filt[order]
+            
+            # Check for consecutive points showing rise (mag decreasing)
+            for i in range(len(m_sorted) - 1):
+                dt = t_sorted[i+1] - t_sorted[i]
+                dm = m_sorted[i+1] - m_sorted[i]
+                
+                # Rising: dm < -0.1 mag over dt > 0.5 days
+                if dm < -0.1 and dt > 0.5 and dt < 30:
+                    rising_observed = True
+                    break
+        
+        if rising_observed:
+            break
+    
+    if not rising_observed:
+        return False
+    
+    # Criterion 3: Temporal baseline
+    detected_mask = snr >= 5
+    if np.sum(detected_mask) < 2:
+        return False
+    
+    duration = np.ptp(times[detected_mask])
+    if duration < 15:  # days
+        return False
+    
+    return True
+
+class SLSN_CharacterizeMetric(SLSN_Base_Metric):
+    """
+    Characterization metric following Inserra+2024 catalog criteria.
+    
+    An SLSN is 'characterized' if:
+    1. It's detected (bronze criterion)
+    2. ≥5 epochs with SNR≥5 across all filters
+    3. ≥3 different filters with detections
+    4. ≥2 epochs within ±10 days of peak
+    5. Observations extend to +30 days post-peak (for decline rate)
+    """
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.metricName = 'SLSN_Characterize'
+        self.obs_records = {}
+    
+    def run(self, dataSlice, slice_point=None):
+        snr, filters, times, obs_record = evaluate(
+            self, dataSlice, slice_point, return_full_obs=False
+        )
+        
+        if obs_record is None:
+            return 0.0
+        
+        # Must pass detection first
+        detected = detect_slsn(filters, snr, times, 
+                              obs_record['mag_obs'], obs_record)
+        if not detected:
+            return 0.0
+        
+        # Characterization criteria
+        good = snr >= 5
+        
+        # 1. Sufficient epochs
+        n_epochs = np.sum(good)
+        if n_epochs < 5:
+            return 0.0
+        
+        # 2. Multi-band coverage
+        n_filters = len(np.unique(filters[good]))
+        if n_filters < 3:
+            return 0.0
+        
+        # 3. Coverage near peak (peak_time from slice_point)
+        peak_mjd = self.mjd0 + slice_point['peak_time']
+        near_peak = good & (np.abs(obs_record['mjd_obs'] - peak_mjd) <= 10)
+        if np.sum(near_peak) < 2:
+            return 0.0
+        
+        # 4. Post-peak coverage for decline rate
+        post_peak = good & (obs_record['mjd_obs'] > peak_mjd + 30)
+        if np.sum(post_peak) < 1:
+            return 0.0
+        
+        # Store metadata
+        obs_record['characterized'] = True
+        obs_record['n_epochs'] = n_epochs
+        obs_record['n_filters_char'] = n_filters
+        self.obs_records[slice_point['sid']] = obs_record
+        
+        return 1.0
+
+
+
+
+class SLSN_SpecTriggerMetric(SLSN_Base_Metric):
+    def run(self, dataSlice, slice_point=None):
+        out = evaluate(self, dataSlice, slice_point, return_full_obs=False)
+        if out is None or len(out.get("rows", [])) == 0:
+            return 0.0
+
+        filters = out["filter"]
+        snr     = out["snr"]
+        times   = out["mjd_obs"]
+        mags    = out["mag_obs"]
+
+        detected = detect_slsn(filters, snr, times, mags, out)
+        if not detected:
+            return 0.0
+
+        # Near-peak epochs
+        peak_mjd = self.mjd0 + slice_point['peak_time']
+        near_peak = (snr >= 5) & (np.abs(times - peak_mjd) <= 5)
+        if not np.any(near_peak):
+            return 0.0
+
+        # Brightness requirement
+        if np.min(mags[near_peak]) > 21.0:
+            return 0.0
+
+        # Color check if both bands exist near-peak
+        has_g = np.any(near_peak & (filters == 'g'))
+        has_r = np.any(near_peak & (filters == 'r'))
+        if has_g and has_r:
+            g_mag = np.min(mags[near_peak & (filters == 'g')])
+            r_mag = np.min(mags[near_peak & (filters == 'r')])
+            if (g_mag - r_mag) > 0.3:
+                return 0.0
+
+        return 1.0
+
+
+
+Detect_Metric = SLSN_Detect_Metric

@@ -1366,3 +1366,344 @@ def plot_population_lc_multi_at_obs(
             print(f"[warn] sid={sid}: {e}")
     return results
 
+
+# ---------------------------------------------------------------------
+# Plotting detected vs not detected through each metric on a mosaic 
+# ---------------------------------------------------------------------
+
+def plot_metrics_mosaic_grid(
+    df_detect,
+    df_char,
+    df_spec,
+    *,
+    n_examples=6,
+    snr_threshold=5.0,
+    figsize=(18, 14),
+    outpath=None,
+    seed=42,
+    filter_colors=None,
+    marker_size=30,
+    upperlim_marker='v',
+    title_prefix="SLSN Metrics Comparison"
+):
+    """
+    Create a grid mosaic with individual event subplots for Pass vs Fail.
+    
+    Layout: 3 rows (Detection, Characterization, Spec Trigger) × 2 columns (Pass, Fail)
+    Each panel shows multiple individual event light curves in a grid.
+    
+    Parameters
+    ----------
+    df_detect : pd.DataFrame
+        Detection results with 'detected' column and observation arrays
+    df_char : pd.DataFrame
+        Characterization results with 'characterized' column
+    df_spec : pd.DataFrame
+        Spec trigger results with 'spec_trigger' column
+    n_examples : int
+        Number of example events per Pass/Fail panel (will create grid)
+    snr_threshold : float
+        SNR threshold for detections vs upper limits
+    figsize : tuple
+        Figure size
+    outpath : str or Path
+        Save path
+    seed : int
+        Random seed for sampling
+    filter_colors : dict
+        Custom filter colors
+    marker_size : float
+        Size of observation markers
+    upperlim_marker : str
+        Marker for upper limits (default: 'v' for downward triangle)
+    title_prefix : str
+        Overall title prefix
+    
+    Returns
+    -------
+    fig : matplotlib.Figure
+    
+    Notes
+    -----
+    Add to diagnostics.py after existing plot functions.
+    
+    This version creates individual subplots for each event, organized in a grid.
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.gridspec import GridSpec
+    
+    # Default filter colors
+    if filter_colors is None:
+        filter_colors = {
+            'u': '#56108C', 'g': '#0077BB', 'r': '#33A02C',
+            'i': '#E31A1C', 'z': '#FF7F00', 'y': '#B15928'
+        }
+    
+    rng = np.random.default_rng(seed)
+    
+    # Helper function to plot single event in a subplot
+    def plot_single_event(ax, event_row, show_legend=False):
+        """Plot one event's observations with error bars and upper limits."""
+        # Extract observation arrays
+        mjd_obs = np.asarray(event_row.get('mjd_obs', []), dtype=float)
+        mag_obs = np.asarray(event_row.get('mag_obs', []), dtype=float)
+        snr_obs = np.asarray(event_row.get('snr_obs', []), dtype=float)
+        filter_obs = np.asarray(event_row.get('filter', []), dtype=str)
+        
+        # Estimate magnitude errors from SNR: σ_m ≈ 1.0857 / SNR
+        if 'magerr_obs' in event_row and event_row['magerr_obs'] is not None:
+            magerr_obs = np.asarray(event_row['magerr_obs'], dtype=float)
+        else:
+            magerr_obs = np.where(snr_obs > 0, 1.0857 / snr_obs, np.nan)
+        
+        # Get event metadata
+        peak_mjd = float(event_row.get('peak_mjd', 0))
+        z = float(event_row.get('z', 0))
+        sid = int(event_row.get('sid', -1))
+        
+        # Time relative to peak
+        time_rel = mjd_obs - peak_mjd
+        
+        # Get unique filters
+        filters_present = np.unique(filter_obs)
+        
+        # Plot each filter
+        for filt in filters_present:
+            mask = filter_obs == filt
+            if not np.any(mask):
+                continue
+            
+            t_filt = time_rel[mask]
+            m_filt = mag_obs[mask]
+            snr_filt = snr_obs[mask]
+            merr_filt = magerr_obs[mask]
+            
+            color = filter_colors.get(filt, 'gray')
+            
+            # Separate detections and upper limits
+            det_mask = snr_filt >= snr_threshold
+            lim_mask = snr_filt < snr_threshold
+            
+            # Plot detections with error bars
+            if np.any(det_mask):
+                ax.errorbar(
+                    t_filt[det_mask], m_filt[det_mask],
+                    yerr=merr_filt[det_mask],
+                    fmt='o', color=color, markersize=np.sqrt(marker_size),
+                    alpha=0.7, capsize=2, capthick=1,
+                    label=filt if show_legend else None,
+                    zorder=3
+                )
+            
+            # Plot upper limits
+            if np.any(lim_mask):
+                ax.scatter(
+                    t_filt[lim_mask], m_filt[lim_mask],
+                    marker=upperlim_marker, s=marker_size,
+                    color=color, alpha=0.3, zorder=2
+                )
+        
+        # Formatting
+        ax.invert_yaxis()
+        ax.grid(alpha=0.2, linestyle='--', linewidth=0.5)
+        ax.tick_params(labelsize=7)
+        
+        # Compact title
+        ax.set_title(f'sid={sid}, z={z:.2f}', fontsize=7, pad=2)
+        
+        if show_legend and len(filters_present) > 0:
+            ax.legend(fontsize=6, ncol=3, framealpha=0.7, loc='best')
+    
+    # Define metrics
+    metrics_data = [
+        ('DETECTION', df_detect, 'detected'),
+        ('CHARACTERIZATION', df_char, 'characterized'),
+        ('SPEC TRIGGER', df_spec, 'spec_trigger')
+    ]
+    
+    # Determine grid layout for events (e.g., 3x2 for 6 events)
+    n_rows_per_panel = int(np.ceil(np.sqrt(n_examples)))
+    n_cols_per_panel = int(np.ceil(n_examples / n_rows_per_panel))
+    
+    # Create figure
+    fig = plt.figure(figsize=figsize)
+    
+    # Main GridSpec: 3 rows (metrics) × 2 columns (pass/fail)
+    gs_main = GridSpec(3, 2, figure=fig, hspace=0.4, wspace=0.3,
+                       left=0.08, right=0.96, top=0.93, bottom=0.05)
+    
+    # Plot each metric
+    for row_idx, (metric_name, df, status_col) in enumerate(metrics_data):
+        
+        # Check if status column exists
+        if status_col not in df.columns:
+            print(f"⚠️  Warning: '{status_col}' not found in dataframe for {metric_name}")
+            print(f"    Available columns: {df.columns.tolist()}")
+            # Add the column as False if missing
+            df[status_col] = False
+        
+        # Check for observation data
+        required_cols = ['mjd_obs', 'mag_obs', 'filter', 'snr_obs']
+        missing_cols = [c for c in required_cols if c not in df.columns]
+        if missing_cols:
+            print(f"⚠️  Warning: Missing observation columns in {metric_name}: {missing_cols}")
+            continue
+        
+        # Separate pass and fail
+        pass_df = df[df[status_col] == True].copy()
+        fail_df = df[df[status_col] == False].copy()
+        
+        n_pass = len(pass_df)
+        n_fail = len(fail_df)
+        
+        print(f"\n{metric_name}:")
+        print(f"  Pass: {n_pass} / {len(df)} ({100*n_pass/len(df):.1f}%)")
+        print(f"  Fail: {n_fail} / {len(df)} ({100*n_fail/len(df):.1f}%)")
+        
+        # Sample examples
+        n_pass_sample = min(n_examples, n_pass)
+        n_fail_sample = min(n_examples, n_fail)
+        
+        if n_pass_sample > 0:
+            pass_sample = pass_df.sample(n=n_pass_sample, random_state=seed)
+        else:
+            pass_sample = pass_df
+        
+        if n_fail_sample > 0:
+            fail_sample = fail_df.sample(n=n_fail_sample, random_state=seed)
+        else:
+            fail_sample = fail_df
+        
+        # ==========================
+        # PASS COLUMN (left)
+        # ==========================
+        gs_pass = gs_main[row_idx, 0].subgridspec(
+            n_rows_per_panel, n_cols_per_panel,
+            hspace=0.3, wspace=0.25
+        )
+        
+        if len(pass_sample) > 0:
+            for idx, (_, event_row) in enumerate(pass_sample.iterrows()):
+                if idx >= n_examples:
+                    break
+                i = idx // n_cols_per_panel
+                j = idx % n_cols_per_panel
+                ax = fig.add_subplot(gs_pass[i, j])
+                plot_single_event(ax, event_row, show_legend=(idx == 0))
+                
+                # Only label bottom row
+                if i == n_rows_per_panel - 1:
+                    ax.set_xlabel('Days from peak', fontsize=7)
+                else:
+                    ax.set_xlabel('')
+                
+                # Only label left column
+                if j == 0:
+                    ax.set_ylabel('App mag', fontsize=7)
+                else:
+                    ax.set_ylabel('')
+            
+            # Add Pass/Fail title at top of column
+            if row_idx == 0:
+                pass_rate = 100 * n_pass / len(df)
+                ax_title = fig.add_subplot(gs_pass[0, :])
+                ax_title.axis('off')
+                ax_title.text(
+                    0.5, 1.3, f'✓ PASS ({pass_rate:.1f}%)',
+                    transform=ax_title.transAxes,
+                    fontsize=14, fontweight='bold',
+                    color='green', ha='center'
+                )
+        else:
+            # No passing events
+            ax = fig.add_subplot(gs_pass[:, :])
+            ax.text(0.5, 0.5, f'No passing events\nfor {metric_name}',
+                   ha='center', va='center', fontsize=11, color='gray')
+            ax.axis('off')
+        
+        # Add row label on far left
+        if row_idx == 0:
+            ax_label = fig.add_subplot(gs_pass[n_rows_per_panel//2, 0])
+            ax_label.text(
+                -0.6, 0.5, 'DETECTION',
+                transform=ax_label.transAxes,
+                fontsize=13, fontweight='bold',
+                rotation=90, va='center', ha='right'
+            )
+        elif row_idx == 1:
+            ax_label = fig.add_subplot(gs_pass[n_rows_per_panel//2, 0])
+            ax_label.text(
+                -0.6, 0.5, 'CHARACTERIZATION',
+                transform=ax_label.transAxes,
+                fontsize=13, fontweight='bold',
+                rotation=90, va='center', ha='right'
+            )
+        elif row_idx == 2:
+            ax_label = fig.add_subplot(gs_pass[n_rows_per_panel//2, 0])
+            ax_label.text(
+                -0.6, 0.5, 'SPEC TRIGGER',
+                transform=ax_label.transAxes,
+                fontsize=13, fontweight='bold',
+                rotation=90, va='center', ha='right'
+            )
+        
+        # ==========================
+        # FAIL COLUMN (right)
+        # ==========================
+        gs_fail = gs_main[row_idx, 1].subgridspec(
+            n_rows_per_panel, n_cols_per_panel,
+            hspace=0.3, wspace=0.25
+        )
+        
+        if len(fail_sample) > 0:
+            for idx, (_, event_row) in enumerate(fail_sample.iterrows()):
+                if idx >= n_examples:
+                    break
+                i = idx // n_cols_per_panel
+                j = idx % n_cols_per_panel
+                ax = fig.add_subplot(gs_fail[i, j])
+                plot_single_event(ax, event_row, show_legend=(idx == 0))
+                
+                # Only label bottom row
+                if i == n_rows_per_panel - 1:
+                    ax.set_xlabel('Days from peak', fontsize=7)
+                else:
+                    ax.set_xlabel('')
+                
+                # Only label left column
+                if j == 0:
+                    ax.set_ylabel('App mag', fontsize=7)
+                else:
+                    ax.set_ylabel('')
+            
+            # Add Pass/Fail title at top of column
+            if row_idx == 0:
+                fail_rate = 100 * n_fail / len(df)
+                ax_title = fig.add_subplot(gs_fail[0, :])
+                ax_title.axis('off')
+                ax_title.text(
+                    0.5, 1.3, f'✗ FAIL ({fail_rate:.1f}%)',
+                    transform=ax_title.transAxes,
+                    fontsize=14, fontweight='bold',
+                    color='red', ha='center'
+                )
+        else:
+            # No failing events
+            ax = fig.add_subplot(gs_fail[:, :])
+            ax.text(0.5, 0.5, f'No failing events\nfor {metric_name}',
+                   ha='center', va='center', fontsize=11, color='gray')
+            ax.axis('off')
+    
+    # Overall title
+    fig.suptitle(
+        f'{title_prefix}\nRubin Observations Only (○ = SNR≥5, {upperlim_marker} = upper limit)',
+        fontsize=15, fontweight='bold', y=0.97
+    )
+    
+    # Save if requested
+    if outpath is not None:
+        plt.savefig(outpath, dpi=150, bbox_inches='tight')
+        print(f"\n✅ Saved mosaic to {outpath}")
+    
+    return fig

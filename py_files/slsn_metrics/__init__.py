@@ -127,6 +127,7 @@ from .runners import (
 
 # Diagnostics
 from .diagnostics import (
+    plot_metrics_mosaic,
     _get_available_bands,
     plot_population_lc_at_obs, 
     plot_population_lc_multi_at_obs,

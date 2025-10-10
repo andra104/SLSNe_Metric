@@ -405,52 +405,70 @@ class SLSN_CharacterizeMetric(SLSN_Base_Metric):
         self.obs_records = {}
     
     def run(self, dataSlice, slice_point=None):
-        snr, filters, times, obs_record = evaluate_slsn(
-            self, dataSlice, slice_point, return_full_obs=True
-        )
-        if obs_record is None or len(snr) == 0:
-            return 0.0
-        
-        # Must pass detection first
-        detected = detect_slsn(filters, snr, times,
-                               np.asarray(obs_record['mag_obs'], float),
-                               obs_record)
-        if not detected:
-            return 0.0
-        
-        # Characterization criteria
-        good = snr >= 5
-        
-        # ≥5 epochs
-        n_epochs = int(np.sum(good))
-        if n_epochs < 5:
-            return 0.0
-        
-        # ≥3 filters
-        n_filters = np.unique(filters[good]).size
-        if n_filters < 3:
-            return 0.0
-        
-        # ≥2 epochs within ±10 days of peak
-        peak_mjd = self.mjd0 + float(slice_point['peak_time'])
-        mjd_obs = np.asarray(obs_record['mjd_obs'], float)
-        near_peak = good & (np.abs(mjd_obs - peak_mjd) <= 10.0)
-        if np.sum(near_peak) < 2:
-            return 0.0
-        
-        # ≥1 epoch beyond +30 days post-peak
-        post_peak = good & (mjd_obs > (peak_mjd + 30.0))
-        if np.sum(post_peak) < 1:
-            return 0.0
-        
-        # Store metadata
-        obs_record.update({
-            'characterized': True,
-            'n_epochs': n_epochs,
-            'n_filters_char': n_filters,
-        })
-        self.obs_records[slice_point['sid']] = obs_record
-        return 1.0
+            snr, filters, times, obs_record = evaluate_slsn(
+                self, dataSlice, slice_point, return_full_obs=True
+            )
+            
+            # Initialize as failed
+            characterized = False
+            n_epochs = 0
+            n_filters_char = 0
+            
+            # If no observations at all
+            if obs_record is None or len(snr) == 0:
+                if self.store_obs_mode == "full":
+                    # Store minimal record
+                    self.obs_records[slice_point['sid']] = {
+                        'characterized': False,
+                        'sid': int(slice_point['sid']),
+                        'z': float(slice_point['z']),
+                        'peak_time': float(slice_point['peak_time']),
+                        'peak_mjd': self.mjd0 + float(slice_point['peak_time']),
+                        'mjd_obs': [],
+                        'mag_obs': [],
+                        'snr_obs': [],
+                        'filter': []
+                    }
+                return 0.0
+            
+            # Must pass detection first
+            detected = detect_slsn(filters, snr, times,
+                                   np.asarray(obs_record['mag_obs'], float),
+                                   obs_record)
+            
+            if detected:
+                # Characterization criteria
+                good = snr >= 5
+                n_epochs = int(np.sum(good))
+                n_filters_char = np.unique(filters[good]).size if np.any(good) else 0
+                
+                peak_mjd = self.mjd0 + float(slice_point['peak_time'])
+                mjd_obs = np.asarray(obs_record['mjd_obs'], float)
+                
+                # Check all criteria
+                has_enough_epochs = n_epochs >= 5
+                has_enough_filters = n_filters_char >= 3
+                
+                near_peak = good & (np.abs(mjd_obs - peak_mjd) <= 10.0)
+                has_near_peak = np.sum(near_peak) >= 2
+                
+                post_peak = good & (mjd_obs > (peak_mjd + 30.0))
+                has_post_peak = np.sum(post_peak) >= 1
+                
+                # All criteria must pass
+                characterized = (has_enough_epochs and has_enough_filters and 
+                                has_near_peak and has_post_peak)
+            
+            # ALWAYS store the record (pass or fail)
+            if self.store_obs_mode == "full":
+                obs_record.update({
+                    'characterized': characterized,
+                    'n_epochs': n_epochs,
+                    'n_filters_char': n_filters_char,
+                })
+                self.obs_records[slice_point['sid']] = obs_record
+            
+            return 1.0 if characterized else 0.0
 
 # =============================================================================
 # Spectroscopic trigger metric
@@ -470,12 +488,35 @@ class SLSN_SpecTriggerMetric(SLSN_Base_Metric):
         super().__init__(**kwargs)
         self.metricName = 'SLSN_SpecTrigger'
         self.obs_records = {}
-    
+
     def run(self, dataSlice, slice_point=None):
         snr, filters, times, obs_record = evaluate_slsn(
             self, dataSlice, slice_point, return_full_obs=True
         )
+        
+        # Initialize as failed
+        spec_triggered = False
+        min_mag_near_peak = np.nan
+        has_g_near_peak = False
+        has_r_near_peak = False
+        
+        # If no observations
         if obs_record is None or snr.size == 0:
+            if self.store_obs_mode == "full":
+                self.obs_records[slice_point['sid']] = {
+                    'spec_trigger': False,
+                    'min_mag_near_peak': np.nan,
+                    'has_g_near_peak': False,
+                    'has_r_near_peak': False,
+                    'sid': int(slice_point['sid']),
+                    'z': float(slice_point['z']),
+                    'peak_time': float(slice_point['peak_time']),
+                    'peak_mjd': self.mjd0 + float(slice_point['peak_time']),
+                    'mjd_obs': [],
+                    'mag_obs': [],
+                    'snr_obs': [],
+                    'filter': []
+                }
             return 0.0
         
         mags = np.asarray(obs_record['mag_obs'], float)
@@ -483,37 +524,40 @@ class SLSN_SpecTriggerMetric(SLSN_Base_Metric):
         
         # Must pass detection
         detected = detect_slsn(filters, snr, mjd_obs, mags, obs_record)
-        if not detected:
-            return 0.0
         
-        # Near-peak requirement
-        peak_mjd = self.mjd0 + float(slice_point['peak_time'])
-        near_peak = (snr >= 5) & (np.abs(mjd_obs - peak_mjd) <= 5.0)
-        if not np.any(near_peak):
-            return 0.0
+        if detected:
+            peak_mjd = self.mjd0 + float(slice_point['peak_time'])
+            near_peak = (snr >= 5) & (np.abs(mjd_obs - peak_mjd) <= 5.0)
+            
+            if np.any(near_peak):
+                min_mag_near_peak = float(np.min(mags[near_peak]))
+                
+                # Check brightness requirement
+                if min_mag_near_peak <= 21.0:
+                    # Check color (optional)
+                    has_g_near_peak = np.any(near_peak & (filters == 'g'))
+                    has_r_near_peak = np.any(near_peak & (filters == 'r'))
+                    
+                    passes_color = True
+                    if has_g_near_peak and has_r_near_peak:
+                        g_mag = np.min(mags[near_peak & (filters == 'g')])
+                        r_mag = np.min(mags[near_peak & (filters == 'r')])
+                        passes_color = (g_mag - r_mag) <= 0.3
+                    
+                    spec_triggered = passes_color
         
-        # Brightness requirement
-        if np.min(mags[near_peak]) > 21.0:
-            return 0.0
+        # ALWAYS store the record (pass or fail)
+        if self.store_obs_mode == "full":
+            obs_record.update({
+                'spec_trigger': spec_triggered,
+                'min_mag_near_peak': min_mag_near_peak,
+                'has_g_near_peak': has_g_near_peak,
+                'has_r_near_peak': has_r_near_peak,
+            })
+            self.obs_records[slice_point['sid']] = obs_record
         
-        # Optional color check
-        has_g = np.any(near_peak & (filters == 'g'))
-        has_r = np.any(near_peak & (filters == 'r'))
-        if has_g and has_r:
-            g_mag = np.min(mags[near_peak & (filters == 'g')])
-            r_mag = np.min(mags[near_peak & (filters == 'r')])
-            if (g_mag - r_mag) > 0.3:
-                return 0.0
-        
-        # Store metadata
-        obs_record.update({
-            'spec_trigger': True,
-            'min_mag_near_peak': float(np.min(mags[near_peak])),
-            'has_g_near_peak': bool(has_g),
-            'has_r_near_peak': bool(has_r),
-        })
-        self.obs_records[slice_point['sid']] = obs_record
-        return 1.0
+        return 1.0 if spec_triggered else 0.0
+    
 
 # Alias for backward compatibility
 Detect_Metric = SLSN_Detect_Metric

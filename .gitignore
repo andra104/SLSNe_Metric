@@ -3,3 +3,119 @@ SLSNe/
 __pycache__/
 .virtual_documents/
 anaconda_projects/
+
+# =============================================================================
+# SLSN Metrics .gitignore
+# =============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+.virtual_documents/
+*.ipynb_bak
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =============================================================================
+# LARGE DATA FILES - DO NOT COMMIT
+# =============================================================================
+
+# Pickle files (templates, populations, caches)
+*.pkl
+*.pickle
+
+# NumPy arrays
+*.npy
+*.npz
+
+# HDF5 files
+*.h5
+*.hdf5
+
+# OpSim databases (usually 100s of MB to GBs)
+*.db
+*.sqlite
+*.db-journal
+
+# CSV/Parquet data files (if large)
+*_allphot.csv
+*_allphot.parquet
+# But keep small parameter files:
+!all_parameters.txt
+!*_params.csv
+
+# =============================================================================
+# OUTPUT DIRECTORIES
+# =============================================================================
+
+# MAF temporary outputs
+output/Metric_temp*/
+output/_temp*/
+output/**/*.npz
+output/**/*.fits
+
+# Large plot collections
+output/**/*.mp4
+output/**/*.gif
+
+# Specific large outputs
+output/Rubin_tests/SLSNe/*.npz
+output/Rubin_tests/SLSNe/Metric_temp*/
+
+# But keep: small PNGs, CSVs, summary files
+!output/**/*.png
+!output/**/*summary*.csv
+!output/**/*.txt
+
+# =============================================================================
+# RAW DATA (if present)
+# =============================================================================
+
+# Raw supernova data directories
+data/SLSNe_raw/
+SLSNe/
+supernovae/
+
+# But keep processed per-event CSVs if small
+!data/per_event/*.csv
+!data/per_event_cenwave/*.csv
+
+# =============================================================================
+# ENVIRONMENT
+# =============================================================================
+
+anaconda_projects/
+venv/
+env/
+ENV/
+.env
+.conda/
+
+# =============================================================================
+# EXCEPTIONS - Files to KEEP despite patterns above
+# =============================================================================
+
+# Keep example/test data
+!data/examples/*.pkl
+!data/test/*.db
+
+# Keep documentation
+!docs/**/*.pkl  # If you have example pickles in docs

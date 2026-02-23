@@ -44,6 +44,23 @@ __version__ = "0.1.0"
 # Core imports for users
 # =============================================================================
 
+# Path configuration — import first so everything else can use it
+from .paths import (
+    get_repo_root,
+    get_cadences_dir,
+    get_output_dir,
+    get_data_dir,
+    get_per_event_dir,
+    get_all_events_dir,
+    get_shared_output_dir,
+    get_cadence_path,
+    get_cadence_output_dir,
+    get_rubin_sim_data_dir,
+    set_rubin_sim_data_dir,
+    print_paths,
+    quick_path_check,
+)
+
 # Constants & utilities
 from .constants import (
     dm_from_z,
@@ -127,9 +144,9 @@ from .runners import (
 
 # Diagnostics
 from .diagnostics import (
-    plot_metrics_mosaic,
+    plot_metrics_mosaic_grid,
     _get_available_bands,
-    plot_population_lc_at_obs, 
+    plot_population_lc_at_obs,
     plot_population_lc_multi_at_obs,
     validate_template_quality,
     diagnose_abs_from_templates,
@@ -144,6 +161,11 @@ from .diagnostics import (
     compute_slsn_properties,
     assess_literature_coverage,
     find_missing_archetypes,
+    plot_population_diagnostics,
+    plot_detect_diagnostics,
+    plot_healpix_efficiency,
+    plot_population_lc_at_obs,
+    plot_population_lc_multi_at_obs,
 )
 
 # =============================================================================

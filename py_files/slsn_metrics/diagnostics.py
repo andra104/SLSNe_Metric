@@ -465,13 +465,10 @@ def plot_residuals(df: pd.DataFrame, *, by_band=True, vs_phase=False,
 # Observation/Model plotting
 # =============================================================================
 
-output_dir = Path("/Users/andradenebula/Documents/Research/Transient_Metrics/SLSNe_Metric/output/Rubin_tests/SLSNe/")  # or inject from runner
-output_dir.mkdir(parents=True, exist_ok=True)
-
 def plot_event_obs(
     event_name: str,
     per_event_dir: Path,
-    output_dir=output_dir,
+    output_dir=None,
     *,
     use_phase: bool = False,
     z: float | None = None,
@@ -535,13 +532,14 @@ def plot_event_obs(
     ax.legend(frameon=False, ncol=min(8, len(band_vals)))
     ax.set_title(title or event_name)
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f"Catalog_{title or event_name}.png"), dpi=150, bbox_inches="tight")
+    if output_dir is not None:
+        plt.savefig(os.path.join(output_dir, f"Catalog_{title or event_name}.png"), dpi=150, bbox_inches="tight")
     plt.show()
 
 def plot_event_model(
     templates_file: Path,
     template_idx: int,
-    output_dir=output_dir,
+    output_dir=None,
     *,
     bands: list[str] | None = None,
     case_sensitive: bool = True,
@@ -601,7 +599,8 @@ def plot_event_model(
     ax.legend(frameon=False, ncol=min(8, len(draw_keys)))
     ax.set_title(title or f"{names[template_idx]} (template #{template_idx})")
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f"model.png"), dpi=150, bbox_inches="tight")
+    if output_dir is not None:
+        plt.savefig(os.path.join(output_dir, f"model.png"), dpi=150, bbox_inches="tight")
     plt.show()
 
 def plot_event_obs_vs_model(
@@ -609,7 +608,7 @@ def plot_event_obs_vs_model(
     per_event_dir: Path,
     templates_file: Path,
     template_idx: int,
-    output_dir=output_dir,
+    output_dir=None,
     *,
     use_phase: bool = True,
     z: float | None = None,
@@ -701,7 +700,8 @@ def plot_event_obs_vs_model(
     ax.legend(frameon=False, ncol=2, fontsize=9)
     ax.set_title(f"{event_name}  —  template #{template_idx}")
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f"combined_plot.png"), dpi=150, bbox_inches="tight")
+    if output_dir is not None:
+        plt.savefig(os.path.join(output_dir, f"combined_plot.png"), dpi=150, bbox_inches="tight")
     plt.show()
 
 # =============================================================================

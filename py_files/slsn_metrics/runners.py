@@ -16,6 +16,14 @@ from astropy.cosmology import Planck18 as cosmo
 from rubin_sim.maf.metric_bundles import MetricBundle, MetricBundleGroup
 from .metrics import SLSN_Detect_Metric, SLSN_CharacterizeMetric, SLSN_SpecTriggerMetric
 from .diagnostics import plot_healpix_efficiency
+from .paths import (
+    get_repo_root,
+    get_cadences_dir,
+    get_output_dir,
+    get_cadence_path,
+    get_cadence_output_dir,
+    get_shared_output_dir,
+)
 
 
 # --------------------------------------------
@@ -79,9 +87,9 @@ def build_filenames(rate_density,
     if ignore_triples==True:
         testname_metric_only = str(testname_metric_only)+"_it_"+str(ignore_triples)
 
-    #shar
-    if base_dir==None:
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "output"))
+    # Use paths.py to resolve base_dir — works on any machine automatically
+    if base_dir is None:
+        base_dir = str(get_repo_root() / "output")
         
     label = (f"{science_case}_den_{rate_density}"
              f"_d_{d_min}-{d_max}_Mpc"
@@ -102,14 +110,14 @@ def run_slsn_detect(
     templates,
     population,
     cadences,
-    db_dir,
-    output_dir,
+    db_dir=None,
+    output_dir=None,
     store_obs_mode="meta",
     mjd0=60980.5,
     ignore_triples=True,
     save_csv=True,
     make_plots=True,
-    clean_temp=True,  # ← ADD THIS
+    clean_temp=True,
     verbose=True
 ):
     """
@@ -123,10 +131,10 @@ def run_slsn_detect(
         Population slicer with slice_points
     cadences : list
         OpSim database names
-    db_dir : str
-        Directory containing .db files
-    output_dir : str
-        Where to save results
+    db_dir : str or Path, optional
+        Directory containing .db files. Defaults to repo_root/cadences/ via paths.py.
+    output_dir : str or Path, optional
+        Where to save results. Defaults to repo_root/output/SLSNe/ via paths.py.
     store_obs_mode : str
         "none", "meta", "diag", or "full"
     mjd0 : float
@@ -152,7 +160,13 @@ def run_slsn_detect(
     import os
     import shutil
     from collections import OrderedDict
-    
+
+    # Resolve paths via paths.py if not provided — works on any machine
+    if db_dir is None:
+        db_dir = str(get_cadences_dir())
+    if output_dir is None:
+        output_dir = str(get_output_dir("SLSNe"))
+
     results = {}
     n_events = len(population.slice_points['distance'])
     
@@ -868,8 +882,8 @@ def run_slsn_multi_metrics(
     templates,
     population,
     cadences,
-    db_dir,
-    output_dir,
+    db_dir=None,
+    output_dir=None,
     *,
     metrics_list=None,
     mjd0=60980.5,
@@ -911,6 +925,12 @@ def run_slsn_multi_metrics(
     summary_df : DataFrame
         Summary results across all metrics and cadences
     """
+    # Resolve paths via paths.py if not provided — works on any machine
+    if db_dir is None:
+        db_dir = str(get_cadences_dir())
+    if output_dir is None:
+        output_dir = str(get_output_dir("SLSNe"))
+
     if metrics_list is None:
         metrics_list = [
             SLSN_Detect_Metric(lc_model=templates, mjd0=mjd0, 

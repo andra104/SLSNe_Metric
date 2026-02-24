@@ -240,8 +240,8 @@ def tremonti04_mzr(log_M_star, z=0):
     """
     log_M_star = np.atleast_1d(np.asarray(log_M_star, dtype=float))
     x = log_M_star - 10.0
-    OH_z0 = -1.492 + 1.847 * x - 0.08026 * x**2
-    OH = OH_z0 - 0.14 * z
+    OH_z0 = -1.492 + 1.847 * log_M_star - 0.08026 * log_M_star**2
+    OH = OH_z0 - 0.45 * z
     return OH.item() if OH.size == 1 else OH
 
 
@@ -361,8 +361,8 @@ def metallicity_fraction(z, OH_max=8.3, n_mass_bins=200):
         # Heaviside: 1 where OH < OH_max (low metallicity = SLSN-favorable)
         low_Z = (OH < OH_max).astype(float)
 
-        numerator   = np.trapz(phi * sfr * low_Z, dx=d_log_M)
-        denominator = np.trapz(phi * sfr,          dx=d_log_M)
+        numerator   = np.trapezoid(phi * sfr * low_Z, dx=d_log_M)
+        denominator = np.trapezoid(phi * sfr,          dx=d_log_M)
 
         f_z[i] = numerator / denominator if denominator > 0 else 0.0
 

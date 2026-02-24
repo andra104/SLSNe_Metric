@@ -35,6 +35,9 @@ __all__ = [
     "compute_slsn_properties",
     "assess_literature_coverage",
     "find_missing_archetypes",
+    "plot_rate_evolution_comparison",
+    "compare_simulated_vs_observed_rates",
+    "plot_population_rate_vs_redshift",
 ]
 
 # =============================================================================
@@ -1706,4 +1709,280 @@ def plot_metrics_mosaic_grid(
         plt.savefig(outpath, dpi=150, bbox_inches='tight')
         print(f"\n✅ Saved mosaic to {outpath}")
     
+    return fig
+
+# =============================================================================
+# Rate evolution theory plot (Figure 1 from abstract)
+# =============================================================================
+
+def plot_rate_evolution_comparison(z_grid=None, OH_max=8.3,
+                                   R_ref=1e-7, z_ref=0.17,
+                                   save_path=None):
+    """
+    Reproduce Figure 1 from abstract: SLSN rate evolution with/without
+    metallicity dependence, compared to observed rate measurements.
+
+    Two-panel layout:
+      Top    — f(z): fraction of SF in low-metallicity galaxies
+      Bottom — R(z): full rate evolution vs observed data points
+
+    Physics
+    -------
+    - Madau & Dickinson 2014 CSFRD
+    - Tremonti+04 MZR + Andrews & Martini 2013 redshift evolution
+    - Leja+2020 stellar mass function, Leja+2022 main sequence SFR
+    - Schulze+2021 metallicity threshold OH_max = 8.3
+
+    Parameters
+    ----------
+    z_grid : array, optional
+        Redshift grid for plotting. Default: np.linspace(0.0, 3.0, 100).
+        Note: metallicity_fraction is evaluated on a coarser grid
+        internally because it integrates over stellar mass at each z.
+    OH_max : float
+        Metallicity threshold 12 + log10(O/H)_max. Default 8.3.
+    R_ref : float
+        Reference rate at z_ref [Mpc^-3 yr^-1]. Default 1e-7 (Quimby+13).
+    z_ref : float
+        Reference redshift. Default 0.17 (Quimby+13).
+    save_path : str or Path, optional
+        If given, saves figure here.
+
+    Returns
+    -------
+    fig : matplotlib.Figure
+    """
+    # Local imports to avoid circular dependency:
+    # population.py imports diagnostics.py, so we cannot import at module level.
+    from .population import (
+        slsn_rate_evolution,
+        cosmic_sfr_density_MD14,
+        metallicity_fraction,
+        OBSERVED_RATES,
+    )
+
+    if z_grid is None:
+        z_grid = np.linspace(0.0, 3.0, 100)
+
+    z_grid = np.asarray(z_grid)
+
+    # --- Rate with metallicity evolution (full model) ---
+    rate_with_metallicity = slsn_rate_evolution(z_grid, R_ref, z_ref, OH_max)
+
+    # --- Rate WITHOUT metallicity (pure CSFRD, f(z) = constant = 1) ---
+    psi_z   = cosmic_sfr_density_MD14(z_grid)
+    psi_ref = cosmic_sfr_density_MD14(z_ref)
+    rate_no_metallicity = R_ref * psi_z / psi_ref
+
+    # --- Metallicity fraction f(z) ---
+    # Coarser grid because metallicity_fraction integrates over stellar mass
+    z_coarse = np.linspace(z_grid.min(), z_grid.max(), 40)
+    f_z = metallicity_fraction(z_coarse, OH_max)
+
+    fig, (ax_frac, ax_rate) = plt.subplots(2, 1, figsize=(8, 10), sharex=True)
+
+    # ------------------------------------------------------------------
+    # Top panel: f(z)
+    # ------------------------------------------------------------------
+    ax_frac.plot(z_coarse, f_z, 'r-', lw=2.5,
+                 label=f'$f(z)$  [OH$_{{max}}$ = {OH_max}]')
+    ax_frac.axvline(z_ref, color='gray', ls=':', lw=1.5,
+                    alpha=0.7, label=f'$z_{{ref}}$ = {z_ref}')
+    ax_frac.set_ylabel('Fraction $f(z)$', fontsize=13)
+    ax_frac.set_ylim(0, 1)
+    ax_frac.legend(fontsize=11)
+    ax_frac.grid(alpha=0.3)
+    ax_frac.set_title(
+        'Fraction of SF in Low-Metallicity Galaxies\n'
+        '(Tremonti+04 MZR + Andrews & Martini 2013)',
+        fontsize=13
+    )
+
+    # ------------------------------------------------------------------
+    # Bottom panel: R(z) vs observed measurements
+    # ------------------------------------------------------------------
+    ax_rate.plot(z_grid, rate_with_metallicity, 'r-', lw=2.5,
+                 label='With metallicity evolution  $R(z) \\propto \\Psi(z)\\cdot f(z)$')
+    ax_rate.plot(z_grid, rate_no_metallicity, 'b--', lw=2.5,
+                 label='No metallicity (pure CSFRD)  $R(z) \\propto \\Psi(z)$')
+
+    # Observed data points — each labeled by reference
+    for obs in OBSERVED_RATES:
+        ax_rate.errorbar(
+            obs['z'], obs['rate'],
+            yerr=[[obs['err_low']], [obs['err_high']]],
+            fmt='ko', markersize=8, capsize=5, capthick=2,
+            label=obs['ref']
+        )
+
+    ax_rate.axvline(z_ref, color='gray', ls=':', lw=1.5, alpha=0.7)
+    ax_rate.set_xlabel('Redshift $z$', fontsize=13)
+    ax_rate.set_ylabel('Volumetric Rate  [Mpc$^{-3}$ yr$^{-1}$]', fontsize=13)
+    ax_rate.set_yscale('log')
+    ax_rate.set_ylim(1e-8, 1e-5)
+    ax_rate.legend(fontsize=10)
+    ax_rate.grid(alpha=0.3, which='both')
+    ax_rate.set_title(
+        f'SLSN Volumetric Rate Evolution\n'
+        f'$R_{{ref}}$ = {R_ref:.0e} Mpc$^{{-3}}$ yr$^{{-1}}$ at $z_{{ref}}$ = {z_ref}',
+        fontsize=13
+    )
+
+    plt.tight_layout()
+
+    if save_path:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"✓ Saved rate evolution plot → {save_path}")
+
+    plt.show()
+    return fig
+
+def compare_simulated_vs_observed_rates(population_slicer, z_bins=None):
+    from .population import OBSERVED_RATES
+    from astropy.cosmology import Planck18 as cosmo
+    import astropy.units as u_astropy
+
+    sp = population_slicer.slice_points
+    z_vals = sp['z']
+    peak_times = sp['peak_time']
+    t_survey_years = (peak_times.max() - peak_times.min()) / 365.25
+
+    # Sky fraction from galactic latitude cut
+    # |b| > 15° covers fraction = 1 - sin(15°) of full sky
+    sky_fraction = 1.0 - np.sin(np.radians(15.0))  # ≈ 0.741
+
+    if z_bins is None:
+        # Bins matched to observed rate measurements + population range
+        z_bins = np.array([0.1, 0.25, 0.4, 0.7, 1.0, 1.5, 2.0])
+
+    results = []
+    for i in range(len(z_bins) - 1):
+        z_low, z_high = z_bins[i], z_bins[i + 1]
+        z_mid = 0.5 * (z_low + z_high)
+
+        mask = (z_vals >= z_low) & (z_vals < z_high)
+        n_events = int(mask.sum())
+
+        V_low  = cosmo.comoving_volume(z_low).to_value(u_astropy.Mpc**3)
+        V_high = cosmo.comoving_volume(z_high).to_value(u_astropy.Mpc**3)
+        # Correct for sky fraction — population doesn't cover full sky
+        V_shell_effective = (V_high - V_low) * sky_fraction
+
+        rate_sim = n_events / (V_shell_effective * t_survey_years) if V_shell_effective > 0 else 0.0
+
+        obs_match = [obs for obs in OBSERVED_RATES if z_low <= obs['z'] < z_high]
+        if obs_match:
+            rate_obs = obs_match[0]['rate']
+            ref = obs_match[0]['ref']
+        else:
+            rate_obs = np.nan
+            ref = '—'
+
+        results.append({
+            'z_min': z_low, 'z_max': z_high, 'z_mid': z_mid,
+            'n_events': n_events, 'volume_Mpc3': V_shell_effective,
+            'rate_simulated': rate_sim, 'rate_observed': rate_obs,
+            'ratio_sim/obs': rate_sim / rate_obs if np.isfinite(rate_obs) else np.nan,
+            'reference': ref
+        })
+
+    df = pd.DataFrame(results)
+    print("\n" + "=" * 85)
+    print("SIMULATED VS OBSERVED RATE COMPARISON")
+    print("=" * 85)
+    print(df.to_string(index=False, float_format=lambda x: f'{x:.2e}'))
+    print("=" * 85 + "\n")
+    return df
+
+
+def plot_population_rate_vs_redshift(population_slicer,
+                                      rate_model='evolving',
+                                      R_ref=1e-7, z_ref=0.17, OH_max=8.3,
+                                      z_bins=None, save_path=None):
+    """
+    Diagnostic: simulated event rate per redshift bin vs theoretical curve
+    and observed measurements.
+
+    Call AFTER generate_SLSN_PopSlicer to verify the population reproduces
+    the intended rate evolution.
+
+    Parameters
+    ----------
+    population_slicer : UserPointsSlicer
+        Output of generate_SLSN_PopSlicer
+    rate_model : str
+        'evolving' or 'constant' — controls whether theory curve is plotted
+    R_ref : float
+        Reference rate [Mpc^-3 yr^-1]
+    z_ref : float
+        Reference redshift
+    OH_max : float
+        Metallicity threshold
+    z_bins : array, optional
+        Redshift bin edges for histogram. Default: 15 equal bins
+    save_path : str or Path, optional
+        Save path for figure
+
+    Returns
+    -------
+    fig : matplotlib.Figure
+    """
+    from .population import slsn_rate_evolution, OBSERVED_RATES
+    from astropy.cosmology import Planck18 as cosmo
+    import astropy.units as u_astropy
+
+    sp = population_slicer.slice_points
+    z_vals = sp['z']
+    peak_times = sp['peak_time']
+    t_survey_years = (peak_times.max() - peak_times.min()) / 365.25
+
+    if z_bins is None:
+        z_bins = np.linspace(z_vals.min(), z_vals.max(), 15)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Simulated rate per bin
+    counts, edges = np.histogram(z_vals, bins=z_bins)
+    z_centers = 0.5 * (edges[:-1] + edges[1:])
+
+    rates_sim = []
+    for i in range(len(edges) - 1):
+        V = (cosmo.comoving_volume(edges[i + 1]).to_value(u_astropy.Mpc**3)
+             - cosmo.comoving_volume(edges[i]).to_value(u_astropy.Mpc**3))
+        rates_sim.append(counts[i] / (V * t_survey_years) if V > 0 else 0.0)
+
+    ax.scatter(z_centers, rates_sim, s=100, alpha=0.7, c='steelblue',
+               edgecolors='k', linewidths=1.5, zorder=3, label='Simulated')
+
+    # Theoretical curve
+    if rate_model == 'evolving':
+        z_theory = np.linspace(z_vals.min(), z_vals.max(), 100)
+        rate_theory = slsn_rate_evolution(z_theory, R_ref, z_ref, OH_max)
+        ax.plot(z_theory, rate_theory, 'r-', lw=2.5,
+                label=f'Theory R(z)  [OH_max={OH_max}]', zorder=2)
+
+    # Observed points
+    for i, obs in enumerate(OBSERVED_RATES):
+        if z_vals.min() <= obs['z'] <= z_vals.max():
+            ax.errorbar(obs['z'], obs['rate'],
+                        yerr=[[obs['err_low']], [obs['err_high']]],
+                        fmt='ko', markersize=10, capsize=5, capthick=2,
+                        label=obs['ref'], zorder=4)
+
+    ax.set_xlabel('Redshift', fontsize=13)
+    ax.set_ylabel('Volumetric Rate  [Mpc$^{-3}$ yr$^{-1}$]', fontsize=13)
+    ax.set_yscale('log')
+    ax.set_title(f'Simulated SLSN Rate vs Redshift  ({rate_model} model)', fontsize=14)
+    ax.legend(fontsize=10)
+    ax.grid(alpha=0.3, which='both')
+
+    if save_path:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"✓ Saved → {save_path}")
+
+    plt.show()
     return fig

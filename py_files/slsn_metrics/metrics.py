@@ -465,6 +465,13 @@ class SLSN_CharacterizeMetric(SLSN_Base_Metric):
                     'characterized': characterized,
                     'n_epochs': n_epochs,
                     'n_filters_char': n_filters_char,
+                    'sid': int(slice_point['sid']),
+                    'z': float(slice_point['z']),
+                    'ra': float(slice_point['ra']),
+                    'dec': float(slice_point['dec']),
+                    'distance_Mpc': float(slice_point['distance']),
+                    'ebv': float(slice_point['ebv']),
+                    'peak_time': float(slice_point['peak_time']),
                 })
                 self.obs_records[slice_point['sid']] = obs_record
             
@@ -553,6 +560,13 @@ class SLSN_SpecTriggerMetric(SLSN_Base_Metric):
                 'min_mag_near_peak': min_mag_near_peak,
                 'has_g_near_peak': has_g_near_peak,
                 'has_r_near_peak': has_r_near_peak,
+                'sid': int(slice_point['sid']),
+                'z': float(slice_point['z']),
+                'ra': float(slice_point['ra']),
+                'dec': float(slice_point['dec']),
+                'distance_Mpc': float(slice_point['distance']),
+                'ebv': float(slice_point['ebv']),
+                'peak_time': float(slice_point['peak_time']),
             })
             self.obs_records[slice_point['sid']] = obs_record
         

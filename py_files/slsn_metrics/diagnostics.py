@@ -38,6 +38,8 @@ __all__ = [
     "plot_rate_evolution_comparison",
     "compare_simulated_vs_observed_rates",
     "plot_population_rate_vs_redshift",
+    "plot_detection_diagnostics",
+    "plot_sky_detection",
 ]
 
 # =============================================================================
@@ -1986,3 +1988,493 @@ def plot_population_rate_vs_redshift(population_slicer,
 
     plt.show()
     return fig
+
+def plot_detection_diagnostics(
+    df_obs,
+    population_slicer=None,
+    filtername="r",
+    mjd0=60980.5,
+    bins_gap=np.arange(-100, 200, 5),
+    bins_mag=np.arange(18, 32, 0.25),
+    prefer_cadence=True,
+    show_residuals=True,
+    save_dir=None,
+):
+    """
+    Post-metric diagnostic plots for SLSN detection results.
+
+    Reproduces the three key plots from shared_utils plot_population_diagnostics,
+    adapted for the SLSN pipeline's df_obs format.
+
+    Plots
+    -----
+    A) Time gap: first detectable observation minus peak time (detected vs not)
+    B) Peak apparent magnitude histogram in chosen filter (detected vs not)
+    C) Implanted vs observed peak magnitude scatter (detected vs not)
+
+    Parameters
+    ----------
+    df_obs : DataFrame
+        Output from metric run with columns: detected, peak_time, first_det_mjd,
+        mjd_obs, mag_obs, filter, per_filter_min_mag, z, distance_modulus.
+    population_slicer : UserPointsSlicer, optional
+        For fallback peak mag reconstruction.
+    filtername : str
+        Which LSST filter to use for magnitude plots. Default 'r'.
+    mjd0 : float
+        Survey start MJD.
+    bins_gap : array
+        Histogram bins for time gap plot.
+    bins_mag : array
+        Histogram bins for magnitude plot.
+    prefer_cadence : bool
+        Use cadence-aware injected peak mag if available.
+    show_residuals : bool
+        Show implanted-observed residual histogram.
+    save_dir : str or Path, optional
+        Directory to save plots.
+    """
+    import matplotlib.pyplot as _plt
+
+    df = df_obs.copy()
+    detected = df["detected"].astype(bool).values if "detected" in df.columns \
+               else np.zeros(len(df), bool)
+
+    # Helper
+    def _min_in_filter(filters, mags, f):
+        if filters is None or mags is None:
+            return np.nan
+        filters = np.asarray(filters)
+        mags    = np.asarray(mags, dtype=float)
+        mask = (filters == f) & np.isfinite(mags) & (mags < 90)
+        return float(np.min(mags[mask])) if np.any(mask) else np.nan
+
+    # ── A) Time gap ──────────────────────────────────────────────
+    # ── Compute first_det_mjd and per_filter_min_mag if missing ──
+    if "first_det_mjd" not in df.columns:
+        def _first_det(row):
+            mjds = np.asarray(row.get("mjd_obs", []), dtype=float)
+            snrs = np.asarray(row.get("snr_obs", []), dtype=float)
+            good = np.isfinite(snrs) & (snrs >= 5) & np.isfinite(mjds)
+            return float(np.min(mjds[good])) if np.any(good) else np.nan
+        df["first_det_mjd"] = df.apply(_first_det, axis=1)
+
+    if "per_filter_min_mag" not in df.columns:
+        def _per_filter(row):
+            f_arr = np.asarray(row.get("filter", []))
+            m_arr = np.asarray(row.get("mag_obs", []), dtype=float)
+            s_arr = np.asarray(row.get("snr_obs", []), dtype=float)
+            result = {}
+            for f in "ugrizy":
+                mask = (f_arr == f) & np.isfinite(m_arr) & (m_arr < 90) & np.isfinite(s_arr) & (s_arr >= 5)
+                result[f] = float(np.min(m_arr[mask])) if np.any(mask) else np.nan
+            return result
+        df["per_filter_min_mag"] = df.apply(_per_filter, axis=1)
+
+    if "peak_time" in df.columns and "first_det_mjd" in df.columns:
+        peak_mjd     = mjd0 + df["peak_time"].astype(float).values
+        first_det    = df["first_det_mjd"].astype(float).values
+        dt_first     = first_det - peak_mjd
+
+        vals_nd = dt_first[~detected & np.isfinite(dt_first)]
+        vals_d  = dt_first[ detected & np.isfinite(dt_first)]
+
+        _plt.figure(figsize=(7.5, 4.5))
+        if vals_nd.size: _plt.hist(vals_nd, bins=bins_gap, alpha=0.5, label="non-detected")
+        if vals_d.size:  _plt.hist(vals_d,  bins=bins_gap, alpha=0.8, label="detected")
+        _plt.axvline(0, ls="--", lw=1, color="k")
+        _plt.xlabel("First observation − Peak (days)")
+        _plt.ylabel("Number of events")
+        _plt.title("Time gap to first detectable observation")
+        _plt.legend()
+        _plt.grid(True, alpha=0.3)
+        _plt.tight_layout()
+        if save_dir:
+            _plt.savefig(Path(save_dir) / "diag_time_gap.png", dpi=150)
+        _plt.show()
+    else:
+        print("[diag] Missing peak_time or first_det_mjd — skipping time gap plot.")
+
+    # ── B) Peak apparent magnitude ────────────────────────────────
+    def _pull_peak_mag(row, f):
+        d = row.get("per_filter_min_mag", {})
+        if isinstance(d, dict):
+            v = d.get(f, np.nan)
+            return v if np.isfinite(v) else np.nan
+        return np.nan
+
+    m_obs_peak = np.array([_pull_peak_mag(r, filtername)
+                            for _, r in df.iterrows()], dtype=float)
+
+    if np.any(np.isfinite(m_obs_peak)):
+        vals_nd = m_obs_peak[~detected & np.isfinite(m_obs_peak)]
+        vals_d  = m_obs_peak[ detected & np.isfinite(m_obs_peak)]
+        _plt.figure(figsize=(7.5, 4.5))
+        if vals_nd.size: _plt.hist(vals_nd, bins=bins_mag, alpha=0.5, label="non-detected")
+        if vals_d.size:  _plt.hist(vals_d,  bins=bins_mag, alpha=0.8, label="detected")
+        _plt.xlabel(f"Observed peak apparent mag ({filtername})")
+        _plt.ylabel("Number of events")
+        _plt.title(f"Peak apparent magnitude — {filtername} band")
+        _plt.legend()
+        _plt.grid(True, alpha=0.3)
+        _plt.tight_layout()
+        if save_dir:
+            _plt.savefig(Path(save_dir) / f"diag_peak_mag_{filtername}.png", dpi=150)
+        _plt.show()
+    else:
+        print(f"[diag] No finite per_filter_min_mag values for {filtername}.")
+
+    # ── C) Implanted vs observed ──────────────────────────────────
+    inj_col = f"peak_app_mag_ebv_{filtername}"
+    if inj_col in df.columns:
+        m_inj = df[inj_col].astype(float).values
+    elif population_slicer is not None and inj_col in population_slicer.slice_points:
+        m_inj = np.asarray(population_slicer.slice_points[inj_col], float)
+        if len(m_inj) != len(df):
+            m_inj = np.full(len(df), np.nan)
+    else:
+        m_inj = np.full(len(df), np.nan)
+
+    good = np.isfinite(m_inj) & np.isfinite(m_obs_peak)
+    if np.any(good):
+        _plt.figure(figsize=(5.6, 5.2))
+        _plt.scatter(m_inj[~detected & good], m_obs_peak[~detected & good],
+                     s=10, alpha=0.4, label="non-detected")
+        _plt.scatter(m_inj[ detected & good], m_obs_peak[ detected & good],
+                     s=18, alpha=0.8, label="detected")
+        lo, hi = m_inj[good].min(), m_inj[good].max()
+        _plt.plot([lo, hi], [lo, hi], 'k--', lw=1, label="1:1")
+        _plt.gca().invert_xaxis()
+        _plt.gca().invert_yaxis()
+        _plt.xlabel(f"Injected peak mag ({filtername})")
+        _plt.ylabel(f"Observed peak mag ({filtername})")
+        _plt.title(f"Injected vs Observed peak — {filtername} band")
+        _plt.legend()
+        _plt.grid(True, alpha=0.3)
+        _plt.tight_layout()
+        if save_dir:
+            _plt.savefig(Path(save_dir) / f"diag_inj_vs_obs_{filtername}.png", dpi=150)
+        _plt.show()
+
+        if show_residuals:
+            res = m_obs_peak[good] - m_inj[good]
+            vals_nd = res[~detected[good]]
+            vals_d  = res[ detected[good]]
+            _plt.figure(figsize=(7.5, 4.5))
+            if vals_nd.size: _plt.hist(vals_nd, bins=np.arange(-3, 3.05, 0.1),
+                                        alpha=0.5, label="non-detected")
+            if vals_d.size:  _plt.hist(vals_d,  bins=np.arange(-3, 3.05, 0.1),
+                                        alpha=0.8, label="detected")
+            _plt.axvline(0, color='k', ls='--', lw=1)
+            _plt.xlabel("Observed − Injected (mag)")
+            _plt.ylabel("Number of events")
+            _plt.title(f"Peak mag residuals — {filtername} band")
+            _plt.legend()
+            _plt.grid(True, alpha=0.3)
+            _plt.tight_layout()
+            if save_dir:
+                _plt.savefig(Path(save_dir) / f"diag_residuals_{filtername}.png", dpi=150)
+            _plt.show()
+    else:
+        print("[diag] No finite points for injected vs observed comparison.")
+
+# =============================================================================
+# Post-metric diagnostic plots  (ported from shared_utils_legacy.py)
+# =============================================================================
+
+def plot_detection_diagnostics(
+    df_obs,
+    population_slicer=None,
+    filtername="r",
+    mjd0=60980.5,
+    bins_gap=np.arange(-100, 200, 5),
+    bins_mag=np.arange(18, 32, 0.25),
+    show_residuals=True,
+    save_dir=None,
+):
+    """
+    Post-metric diagnostic plots for SLSN detection results.
+
+    Ported from shared_utils_legacy.plot_population_diagnostics.
+    Produces three plots:
+      A) Time gap  : first detectable observation minus peak time
+      B) Peak mag  : observed peak apparent magnitude histogram
+      C) Inj vs obs: implanted vs cadence-observed peak magnitude scatter
+
+    Parameters
+    ----------
+    df_obs : DataFrame
+        Output of metric run.  Required columns: detected, peak_time,
+        mjd_obs, mag_obs, snr_obs, filter, sid.
+        Optional: first_det_mjd, per_filter_min_mag, peak_app_mag_ebv_{f}.
+    population_slicer : UserPointsSlicer, optional
+        Used to pull injected peak magnitudes by sid.
+    filtername : str
+        LSST filter for magnitude plots. Default r.
+    mjd0 : float
+        Survey start MJD (must match metric run).
+    bins_gap : array
+        Histogram bins for time-gap plot (days).
+    bins_mag : array
+        Histogram bins for magnitude plot.
+    show_residuals : bool
+        Show observed-minus-injected residual histogram.
+    save_dir : str or Path, optional
+        If given, save each figure here as a PNG.
+    """
+    df = df_obs.copy()
+    detected = df["detected"].astype(bool).values if "detected" in df.columns                else np.zeros(len(df), bool)
+
+    if save_dir is not None:
+        save_dir = Path(save_dir)
+
+    def _min_in_filter(filters, mags, snrs, f, snr_cut=5.0):
+        fa = np.asarray(filters)
+        ma = np.asarray(mags, dtype=float)
+        sa = np.asarray(snrs, dtype=float)
+        mask = (fa == f) & np.isfinite(ma) & (ma < 90) & np.isfinite(sa) & (sa >= snr_cut)
+        return float(np.min(ma[mask])) if np.any(mask) else np.nan
+
+    def _first_det_mjd(mjds, snrs):
+        ma = np.asarray(mjds, dtype=float)
+        sa = np.asarray(snrs, dtype=float)
+        good = np.isfinite(sa) & (sa >= 5) & np.isfinite(ma)
+        return float(np.min(ma[good])) if np.any(good) else np.nan
+
+    if "first_det_mjd" not in df.columns:
+        df["first_det_mjd"] = df.apply(
+            lambda r: _first_det_mjd(r.get("mjd_obs", []), r.get("snr_obs", [])),
+            axis=1
+        )
+
+    if "per_filter_min_mag" not in df.columns:
+        df["per_filter_min_mag"] = df.apply(
+            lambda r: {
+                f: _min_in_filter(r.get("filter", []), r.get("mag_obs", []),
+                                   r.get("snr_obs", []), f)
+                for f in "ugrizy"
+            }, axis=1
+        )
+
+    if "peak_time" in df.columns and "first_det_mjd" in df.columns:
+        peak_mjd  = mjd0 + df["peak_time"].astype(float).values
+        first_det = df["first_det_mjd"].astype(float).values
+        dt        = first_det - peak_mjd
+
+        vals_nd = dt[~detected & np.isfinite(dt)]
+        vals_d  = dt[ detected & np.isfinite(dt)]
+
+        fig, ax = plt.subplots(figsize=(7.5, 4.5))
+        if vals_nd.size: ax.hist(vals_nd, bins=bins_gap, alpha=0.5, label="non-detected")
+        if vals_d.size:  ax.hist(vals_d,  bins=bins_gap, alpha=0.8, label="detected")
+        ax.axvline(0, ls="--", lw=1, color="k")
+        ax.set_xlabel("First detectable observation - Peak (days)")
+        ax.set_ylabel("Number of events")
+        ax.set_title("Time gap to first detectable observation")
+        ax.legend(); ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        if save_dir:
+            plt.savefig(save_dir / "diag_time_gap.png", dpi=150)
+        plt.show()
+    else:
+        print("[diag] Missing peak_time or first_det_mjd - skipping time gap plot.")
+
+    m_obs_peak = np.array(
+        [row.get("per_filter_min_mag", {}).get(filtername, np.nan)
+         if isinstance(row.get("per_filter_min_mag"), dict) else np.nan
+         for _, row in df.iterrows()], dtype=float
+    )
+
+    if np.any(np.isfinite(m_obs_peak)):
+        vals_nd = m_obs_peak[~detected & np.isfinite(m_obs_peak)]
+        vals_d  = m_obs_peak[ detected & np.isfinite(m_obs_peak)]
+
+        fig, ax = plt.subplots(figsize=(7.5, 4.5))
+        if vals_nd.size: ax.hist(vals_nd, bins=bins_mag, alpha=0.5, label="non-detected")
+        if vals_d.size:  ax.hist(vals_d,  bins=bins_mag, alpha=0.8, label="detected")
+        ax.set_xlabel(f"Observed peak apparent mag ({filtername}-band)")
+        ax.set_ylabel("Number of events")
+        ax.set_title(f"Peak apparent magnitude - {filtername} band")
+        ax.legend(); ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        if save_dir:
+            plt.savefig(save_dir / f"diag_peak_mag_{filtername}.png", dpi=150)
+        plt.show()
+    else:
+        print(f"[diag] No finite observed peak mags for {filtername} - skipping.")
+
+    inj_col = f"peak_app_mag_ebv_{filtername}"
+    m_inj = np.full(len(df), np.nan)
+
+    if inj_col in df.columns:
+        m_inj = df[inj_col].astype(float).values
+    elif population_slicer is not None:
+        sp = population_slicer.slice_points
+        if inj_col in sp:
+            inj_arr = np.asarray(sp[inj_col], float)
+            sid_arr = np.asarray(sp["sid"])
+            sid_to_inj = dict(zip(sid_arr, inj_arr))
+            m_inj = np.array([sid_to_inj.get(int(s), np.nan)
+                               for s in df["sid"].values], dtype=float)
+
+    good = np.isfinite(m_inj) & np.isfinite(m_obs_peak)
+    if np.any(good):
+        fig, ax = plt.subplots(figsize=(5.6, 5.2))
+        ax.scatter(m_inj[~detected & good], m_obs_peak[~detected & good],
+                   s=10, alpha=0.4, label="non-detected")
+        ax.scatter(m_inj[ detected & good], m_obs_peak[ detected & good],
+                   s=18, alpha=0.8, label="detected")
+        lo, hi = m_inj[good].min(), m_inj[good].max()
+        ax.plot([lo, hi], [lo, hi], "k--", lw=1, label="1:1")
+        ax.invert_xaxis(); ax.invert_yaxis()
+        ax.set_xlabel(f"Injected peak mag ({filtername})")
+        ax.set_ylabel(f"Observed peak mag ({filtername})")
+        ax.set_title(f"Injected vs Observed peak - {filtername} band")
+        ax.legend(); ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        if save_dir:
+            plt.savefig(save_dir / f"diag_inj_vs_obs_{filtername}.png", dpi=150)
+        plt.show()
+
+        if show_residuals:
+            res = m_obs_peak[good] - m_inj[good]
+            vals_nd = res[~detected[good]]
+            vals_d  = res[ detected[good]]
+            fig, ax = plt.subplots(figsize=(7.5, 4.5))
+            if vals_nd.size: ax.hist(vals_nd, bins=np.arange(-3, 3.05, 0.1),
+                                      alpha=0.5, label="non-detected")
+            if vals_d.size:  ax.hist(vals_d,  bins=np.arange(-3, 3.05, 0.1),
+                                      alpha=0.8, label="detected")
+            ax.axvline(0, color="k", ls="--", lw=1)
+            ax.set_xlabel("Observed - Injected (mag)")
+            ax.set_ylabel("Number of events")
+            ax.set_title(f"Peak mag residuals - {filtername} band")
+            ax.legend(); ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            if save_dir:
+                plt.savefig(save_dir / f"diag_residuals_{filtername}.png", dpi=150)
+            plt.show()
+    else:
+        print("[diag] No finite injected peak mags - skipping injected vs observed plot.")
+        print(f"       Tip: pass population_slicer with {inj_col} in slice_points.")
+
+
+# =============================================================================
+
+def plot_sky_detection(
+    df_obs,
+    population_slicer,
+    mjd0=60980.5,
+    filtername="r",
+    cadence_name="cadence",
+    save_dir=None,
+):
+    """
+    Spatial and temporal diagnostic plots for SLSN detection results.
+
+    Ported from shared_utils_legacy.run_detect plot block.
+    Produces five plots:
+      1) RA  vs apparent peak magnitude
+      2) Dec vs apparent peak magnitude
+      3) Peak time distribution by survey year
+      4) Detections per survey year
+      5) Declination distribution injected vs detected
+    """
+    sp = population_slicer.slice_points
+    detected = df_obs["detected"].astype(bool).values if "detected" in df_obs.columns                else np.zeros(len(df_obs), bool)
+
+    if save_dir is not None:
+        save_dir = Path(save_dir)
+
+    sp_sids = np.asarray(sp["sid"])
+    sp_ra   = np.asarray(sp["ra"])
+    sp_dec  = np.asarray(sp["dec"])
+
+    mag_col = f"peak_app_mag_ebv_{filtername}"
+    sp_mag  = np.asarray(sp[mag_col], float) if mag_col in sp               else np.full(len(sp_sids), np.nan)
+
+    sid_to_idx = {int(s): i for i, s in enumerate(sp_sids)}
+
+    df_sids   = df_obs["sid"].values.astype(int)
+    ras       = np.array([np.degrees(sp_ra [sid_to_idx[s]]) if s in sid_to_idx else np.nan for s in df_sids])
+    decs      = np.array([np.degrees(sp_dec[sid_to_idx[s]]) if s in sid_to_idx else np.nan for s in df_sids])
+    peak_mags = np.array([sp_mag[sid_to_idx[s]]             if s in sid_to_idx else np.nan for s in df_sids])
+
+    finite = np.isfinite(ras) & np.isfinite(peak_mags)
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.scatter(ras[finite], peak_mags[finite], c="black", s=8, alpha=0.4, label="Injected")
+    ax.scatter(ras[finite & detected], peak_mags[finite & detected],
+               c="red", s=18, alpha=0.9, edgecolors="black", label="Detected")
+    ax.set_xlabel("RA [deg]")
+    ax.set_ylabel(f"Apparent Peak Mag ({filtername}-band)")
+    ax.set_title(f"{cadence_name} - Apparent Mag vs RA")
+    ax.invert_yaxis(); ax.grid(True); ax.legend()
+    plt.tight_layout()
+    if save_dir:
+        plt.savefig(save_dir / f"diag_ra_vs_mag_{filtername}.png", dpi=150)
+    plt.show()
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.scatter(decs[finite], peak_mags[finite], c="black", s=8, alpha=0.4, label="Injected")
+    ax.scatter(decs[finite & detected], peak_mags[finite & detected],
+               c="red", s=18, alpha=0.9, edgecolors="black", label="Detected")
+    ax.set_xlabel("Dec [deg]")
+    ax.set_ylabel(f"Apparent Peak Mag ({filtername}-band)")
+    ax.set_title(f"{cadence_name} - Apparent Mag vs Dec")
+    ax.invert_yaxis(); ax.grid(True); ax.legend()
+    plt.tight_layout()
+    if save_dir:
+        plt.savefig(save_dir / f"diag_dec_vs_mag_{filtername}.png", dpi=150)
+    plt.show()
+
+    if "peak_time" in df_obs.columns:
+        years_all = (df_obs["peak_time"].astype(float).values / 365.25).astype(int) + 1
+        years_det = years_all[detected]
+
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.hist(years_all, bins=np.arange(0.5, 11.5, 1), edgecolor="black", alpha=0.7, label="All events")
+        ax.set_xticks(np.arange(1, 11))
+        ax.set_xticklabels([f"Year {i}" for i in range(1, 11)])
+        ax.set_xlabel("Survey Year")
+        ax.set_ylabel("Number of Events")
+        ax.set_title("Distribution of Peak Times (all injected events)")
+        ax.grid(True); ax.legend()
+        plt.tight_layout()
+        if save_dir:
+            plt.savefig(save_dir / "diag_peak_time_dist.png", dpi=150)
+        plt.show()
+
+        from collections import Counter
+        det_counts = Counter(years_det.tolist())
+        yr_bins  = np.arange(1, 11)
+        det_vals = [det_counts.get(int(y), 0) for y in yr_bins]
+
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.bar(yr_bins, det_vals, width=0.7, align="center", edgecolor="black", color="steelblue")
+        ax.set_xticks(yr_bins)
+        ax.set_xticklabels([f"Year {i}" for i in yr_bins])
+        ax.set_xlabel("Survey Year")
+        ax.set_ylabel("Number of Detections")
+        ax.set_title(f"{cadence_name} - Detections per Survey Year")
+        ax.grid(True)
+        plt.tight_layout()
+        if save_dir:
+            plt.savefig(save_dir / "diag_detections_per_year.png", dpi=150)
+        plt.show()
+
+    all_decs = np.degrees(sp_dec)
+    det_decs = decs[finite & detected]
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.hist(all_decs, bins=50, alpha=0.5, label="Injected (full pop)")
+    if det_decs.size:
+        ax.hist(det_decs, bins=50, alpha=0.8, color="red", label="Detected")
+    ax.set_xlabel("Declination [deg]")
+    ax.set_ylabel("Number of Events")
+    ax.set_title(f"{cadence_name} - Declination Distribution")
+    ax.legend(); ax.grid(True)
+    plt.tight_layout()
+    if save_dir:
+        plt.savefig(save_dir / "diag_dec_distribution.png", dpi=150)
+    plt.show()

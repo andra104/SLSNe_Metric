@@ -213,4 +213,5 @@ __all__ = [
     "plot_event_obs",
     "plot_event_model",
     "characterize_template_coverage",
+    "plot_detection_diagnostics"
 ]

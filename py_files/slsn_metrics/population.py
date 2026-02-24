@@ -596,6 +596,20 @@ def generate_SLSN_PopSlicer(lc_model,
         slicer.slice_points.update(slice_data)
         n_loaded = len(slice_data['ra'])
         print(f"[LOAD] Loaded {n_loaded} SLSNe from {load_from}")
+        if make_debug_plots:
+            sp = slicer.slice_points
+            plot_population_diagnostics(
+                ra_rad=sp['ra'],
+                dec_rad=sp['dec'],
+                peak_times=sp['peak_time'],
+                distances_mpc=sp['distance'],
+                z_vals=sp['z'],
+                ebv=sp.get('ebv', None),
+                gall=sp.get('gall', None),
+                galb=sp.get('galb', None),
+                outdir=Path(load_from).parent if load_from else None,
+                prefix=f"population_{sp.get('rate_model', 'loaded')}"
+            )
         return slicer
 
     # ------------------------------------------------------------------

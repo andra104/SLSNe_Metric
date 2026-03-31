@@ -41,6 +41,8 @@ from .constants import z_from_comoving_fast, dm_from_z
 from .runners import get_distance_bounds
 from .model import atomic_save_pickle
 from .diagnostics import plot_population_diagnostics
+from scipy.interpolate import interp1d
+from scipy import integrate
 
 
 # Dust model (singleton)
@@ -56,6 +58,12 @@ OBSERVED_RATES = [
     {'z': 0.3,  'rate': 3.5e-7, 'err_low': 1.0e-7, 'err_high': 1.5e-7, 'ref': 'Prajs+17'},
     {'z': 2.0,  'rate': 1.5e-6, 'err_low': 0.5e-6, 'err_high': 0.8e-6, 'ref': 'Cooke+12'},
 ]
+
+# Frohmaier+2021 anchor — used by tabulated rate model
+# 35 Gpc^-3 yr^-1 = 3.5e-8 Mpc^-3 yr^-1 at z_ref = 0.17
+RATE_REF_GPC3 = 35.0
+RATE_REF_MPC3 = 35.0 / 1e9
+Z_REF         = 0.17
 
 # --------------------------------------------
 # Uniform Sphere Healpix
@@ -499,6 +507,162 @@ def sample_redshifts_weighted_by_rate(n_events, z_min, z_max,
     return z_samples
 
 
+
+# =============================================================================
+# TABULATED RATE MODEL — Ben's CSV-based R(z)
+# Anchored to Frohmaier+2021 (35 Gpc^-3 yr^-1 at z=0.17).
+# Replace internal slsn_rate_evolution() when rate_model='tabulated'.
+# =============================================================================
+
+def load_tabulated_rate(csv_path, model_name):
+    """
+    Load fiducial_models.csv and return a callable R(z) interpolator [Mpc^-3 yr^-1].
+
+    CSV columns (no header row, comment line starts with #):
+        col 0 : redshift z       (0 to 6, step 0.06)
+        col 1 : f_OH             (O-dependent metallicity fraction)
+        col 2 : f_Fe_mixed       (Fe-dependent metallicity fraction)
+
+    Reconstructs R(z) = RATE_REF_MPC3 * [Psi(z)/Psi(z_ref)] * [f(z)/f(z_ref)]
+    exactly as in Ben's load_Rate_example.py.
+
+    Parameters
+    ----------
+    csv_path : str or Path
+        Path to fiducial_models.csv.
+    model_name : str
+        'naive', 'fe_dependent', or 'o_dependent'.
+
+    Returns
+    -------
+    rate_interp : callable
+        rate_interp(z) -> R(z) in Mpc^-3 yr^-1. Accepts scalar or array.
+
+    Reload flags
+    ------------
+    Templates  : NO reload needed.
+    Mag grid   : NO reload needed.
+    Population : MUST regenerate when switching model_name or updating CSV.
+    Kernel     : NO reload needed.
+    """
+    from pathlib import Path as _Path
+    csv_path = _Path(csv_path)
+    if not csv_path.exists():
+        raise FileNotFoundError(
+            f"Rate CSV not found: {csv_path}\n"
+            f"Copy fiducial_models.csv there, or pass --rate-csv <path>."
+        )
+    valid = ('naive', 'fe_dependent', 'o_dependent')
+    if model_name not in valid:
+        raise ValueError(f"model_name must be one of {valid}, got '{model_name}'")
+
+    data     = np.genfromtxt(csv_path, delimiter=',', skip_header=1)
+    z_tab    = data[:, 0]
+    f_OH_tab = data[:, 1]
+    f_Fe_tab = data[:, 2]
+
+    zidx     = np.abs(z_tab - Z_REF).argmin()
+    psi_norm = cosmic_sfr_density_MD14(z_tab) / cosmic_sfr_density_MD14(Z_REF)
+
+    if model_name == 'naive':
+        R_gpc3 = RATE_REF_GPC3 * psi_norm
+    elif model_name == 'fe_dependent':
+        R_gpc3 = RATE_REF_GPC3 * psi_norm * (f_Fe_tab / f_Fe_tab[zidx])
+    elif model_name == 'o_dependent':
+        R_gpc3 = RATE_REF_GPC3 * psi_norm * (f_OH_tab / f_OH_tab[zidx])
+
+    R_mpc3 = R_gpc3 / 1e9   # Gpc^-3 -> Mpc^-3
+
+    rate_interp = interp1d(
+        z_tab, R_mpc3, kind='cubic',
+        bounds_error=False,
+        fill_value=(R_mpc3[0], R_mpc3[-1])
+    )
+
+    print(f"[load_tabulated_rate] model='{model_name}'")
+    print(f"  CSV    : {csv_path}")
+    print(f"  Anchor : {RATE_REF_GPC3} Gpc^-3 yr^-1 at z={Z_REF} (Frohmaier+2021)")
+    print(f"  R(z=0.17) = {float(rate_interp(0.17)):.3e} Mpc^-3 yr^-1")
+    print(f"  R(z=1.00) = {float(rate_interp(1.00)):.3e} Mpc^-3 yr^-1")
+    print(f"  R(z=2.00) = {float(rate_interp(2.00)):.3e} Mpc^-3 yr^-1")
+    return rate_interp
+
+
+def sample_events_from_tabulated_rate(rate_interp, z_min, z_max,
+                                       t_start, t_end, n_bins=200):
+    """
+    Poisson-sample total event count from integral of tabulated R(z) over volume.
+
+    Tabulated equivalent of sample_events_from_evolving_rate().
+
+    Parameters
+    ----------
+    rate_interp : callable
+        Output of load_tabulated_rate(). Returns R(z) in Mpc^-3 yr^-1.
+    z_min, z_max : float
+        Redshift integration limits.
+    t_start, t_end : float
+        Survey window in days.
+    n_bins : int
+        Integration resolution.
+
+    Returns
+    -------
+    n : int
+        Poisson draw of expected event count.
+    """
+    years  = (t_end - t_start) / 365.25
+    z_grid = np.linspace(z_min, z_max, n_bins)
+    dz     = z_grid[1] - z_grid[0]
+
+    total_rate = 0.0
+    for z_val in z_grid:
+        R_z   = float(rate_interp(z_val))
+        dV_dz = (cosmo.differential_comoving_volume(z_val)
+                 .to_value(u.Mpc**3 / u.sr) * 4 * np.pi)
+        total_rate += R_z * dV_dz * dz
+
+    expected_n = total_rate * years
+    print(f"[tabulated] Expected events: {expected_n:.1f}  "
+          f"[z={z_min}-{z_max}, {years:.1f} yr]")
+    return int(np.random.poisson(expected_n))
+
+
+def sample_redshifts_from_tabulated_rate(n_events, z_min, z_max,
+                                          rate_interp, n_bins=1000):
+    """
+    Importance-sample redshifts from P(z) proportional to R(z)*dV/dz,
+    using tabulated R(z). Inverse-CDF method.
+
+    Tabulated equivalent of sample_redshifts_weighted_by_rate().
+
+    Parameters
+    ----------
+    n_events : int
+        Number of redshifts to draw.
+    z_min, z_max : float
+        Redshift range.
+    rate_interp : callable
+        Output of load_tabulated_rate().
+    n_bins : int
+        CDF resolution.
+
+    Returns
+    -------
+    z_samples : ndarray, shape (n_events,)
+    """
+    z_grid  = np.linspace(z_min, z_max, n_bins)
+    weights = np.array([
+        float(rate_interp(z_val))
+        * cosmo.differential_comoving_volume(z_val).to_value(u.Mpc**3 / u.sr)
+        for z_val in z_grid
+    ])
+    cdf      = np.cumsum(weights)
+    cdf      = cdf / cdf[-1]
+    u_rand   = np.random.uniform(0, 1, n_events)
+    return np.interp(u_rand, cdf, z_grid)
+
+
 # =============================================================================
 # Population generator (unified: supports both 'constant' and 'evolving')
 # =============================================================================
@@ -514,6 +678,9 @@ def generate_SLSN_PopSlicer(lc_model,
                              R_ref=1e-7,                   # used when rate_model='evolving'
                              z_ref=0.17,                   # reference redshift for evolving
                              OH_max=8.3,                   # metallicity threshold
+                             # ---- tabulated rate model (Ben's CSV) ----
+                             tabulated_csv=None,           # path to fiducial_models.csv
+                             model_name=None,              # 'naive', 'fe_dependent', 'o_dependent'
                              # ---- sky / time ----
                              peak_t_min=None,
                              peak_t_max=None,
@@ -654,6 +821,30 @@ def generate_SLSN_PopSlicer(lc_model,
               f"z range {z_vals_raw.min():.3f}–{z_vals_raw.max():.3f})")
         print(f"{'='*70}\n")
 
+    elif rate_model == 'tabulated':
+        print(f"\n{'='*70}")
+        print(f"RATE MODEL: TABULATED  [Ben's CSV, model='{model_name}']")
+        print(f"{'='*70}")
+        if tabulated_csv is None:
+            from .paths import get_rate_csv_path
+            tabulated_csv = get_rate_csv_path()
+        if model_name is None:
+            raise ValueError(
+                "rate_model='tabulated' requires model_name. "
+                "Choose: 'naive', 'fe_dependent', or 'o_dependent'."
+            )
+        rate_interp = load_tabulated_rate(tabulated_csv, model_name)
+        n_events_raw = sample_events_from_tabulated_rate(
+            rate_interp, z_min, z_max, t_start, t_end
+        )
+        z_vals_raw = sample_redshifts_from_tabulated_rate(
+            n_events_raw, z_min, z_max, rate_interp
+        )
+        print(f"Generated {n_events_raw} events  "
+              f"(z\u0305 = {z_vals_raw.mean():.3f}, "
+              f"z range {z_vals_raw.min():.3f}\u2013{z_vals_raw.max():.3f})")
+        print(f"{'='*70}\n")
+
     else:  # rate_model == 'constant'
         print(f"\n{'='*70}")
         print(f"RATE MODEL: CONSTANT  [flat rate = {rate_density:.2e} Mpc^-3 yr^-1]")
@@ -748,6 +939,11 @@ def generate_SLSN_PopSlicer(lc_model,
         sp['R_ref']   = R_ref
         sp['z_ref']   = z_ref
         sp['OH_max']  = OH_max
+    elif rate_model == 'tabulated':
+        sp['model_name']    = model_name
+        sp['tabulated_csv'] = str(tabulated_csv)
+        sp['R_ref']         = RATE_REF_MPC3
+        sp['z_ref']         = Z_REF
     else:
         sp['rate_density'] = rate_density
 

@@ -60,15 +60,16 @@ def get_distance_bounds(d_min=None, d_max=None, z_min=None, z_max=None):
 
     raise ValueError("You must provide either (d_min, d_max) or (z_min, z_max)")
 
-def build_filenames(rate_density, 
-                        z_min, 
+def build_filenames(rate_density,
+                        z_min,
                         z_max,
-                        d_min, 
+                        d_min,
                         d_max,
-                        science_case, #"GRBafterglows" for instance
+                        science_case,
+                        model_name=None,          # 'naive', 'fe_dependent', 'o_dependent'
                         testname=None,
                         testname_metric_only=None,
-                        ignore_triples=None,                   
+                        ignore_triples=None,
                         use_extinction=None,
                         use_kcorrect=None,
                         base_dir=None):
@@ -91,17 +92,22 @@ def build_filenames(rate_density,
     if base_dir is None:
         base_dir = str(get_repo_root() / "output")
         
-    label = (f"{science_case}_den_{rate_density}"
-             f"_d_{d_min}-{d_max}_Mpc"
+    model_tag = f"_model_{model_name}" if model_name else ""
+    label = (f"{science_case}{model_tag}"
              f"_z_{z_min}-{z_max}"
-             f"_ext_{use_extinction}_kcor_{use_kcorrect}_{testname}")
+             f"_ext_{use_extinction}_{testname}")
     print(label)
 
     storage_dir = os.path.join(base_dir, science_case)
-    templates_file = os.path.join(storage_dir, label+"_templates.pkl")
-    pop_file = os.path.join(storage_dir, label+"_population.pkl")
-    df_file = os.path.join(storage_dir, label+f"_{testname_metric_only}_obs_record")
-    summary_filename = os.path.join(storage_dir, label+f"_{testname_metric_only}_multi_summary.csv")
+    shared_dir  = os.path.join(storage_dir, "shared")
+    os.makedirs(shared_dir, exist_ok=True)
+    templates_file = os.path.join(shared_dir, "templates.pkl")
+    pop_name = f"population_{model_name}.pkl" if model_name else "population.pkl"
+    pop_file = os.path.join(shared_dir, pop_name)
+    model_dir = os.path.join(storage_dir, model_name) if model_name else storage_dir
+    os.makedirs(model_dir, exist_ok=True)
+    df_file = os.path.join(model_dir, label+f"_{testname_metric_only}_obs_record")
+    summary_filename = os.path.join(model_dir, label+f"_{testname_metric_only}_multi_summary.csv")
     
     return templates_file, pop_file, df_file, storage_dir, summary_filename
 

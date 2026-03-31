@@ -119,6 +119,22 @@ def get_shared_output_dir(science_case: str = "SLSNe") -> Path:
     return d
 
 
+def get_rate_csv_path(filename: str = "fiducial_models.csv") -> Path:
+    """
+    Default path to Ben's tabulated R(z) CSV file.
+    Location: output/SLSNe/shared/fiducial_models.csv
+
+    Override at CLI with --rate-csv. When Ben sends an updated CSV,
+    drop it here and it is picked up automatically.
+
+    CSV column structure (must not change between versions):
+        col 0 : redshift z       (0 to 6, step 0.06)
+        col 1 : f_OH             (O-dependent metallicity fraction)
+        col 2 : f_Fe_mixed       (Fe-dependent metallicity fraction)
+    """
+    return get_shared_output_dir() / filename
+
+
 # =============================================================================
 # Cadence path helpers
 # =============================================================================

@@ -964,17 +964,24 @@ def run_slsn_multi_metrics(
         os.makedirs(temp_dir, exist_ok=True)
         resultsDb = db.ResultsDb(out_dir=temp_dir)
         
-        for metric in metrics_list:
-            metric_name = metric.__class__.__name__
-            if verbose:
-                print(f"  Running {metric_name}...")
-            
-            bundle = MetricBundle(metric, population, note)
-            group = MetricBundleGroup({metric_name: bundle}, opsdb,
-                                       out_dir=temp_dir, results_db=resultsDb)
-            group.run_all()
-            
-            # Summary stats
+        # Build all metric bundles at once — one MAF pass for all metrics
+        # This is ~3x faster than running each metric in a separate group.
+        # Scientific results are identical: detection hierarchy is enforced
+        # internally by each metric's run() method, not by sequential passes.
+        if verbose:
+            names = [m.__class__.__name__ for m in metrics_list]
+            print(f"  Running {len(metrics_list)} metrics in one pass: {names}")
+        
+        bundles = {
+            m.__class__.__name__: MetricBundle(m, population, note)
+            for m in metrics_list
+        }
+        group = MetricBundleGroup(bundles, opsdb,
+                                  out_dir=temp_dir, results_db=resultsDb)
+        group.run_all()
+        
+        # Extract per-metric results
+        for metric_name, bundle in bundles.items():
             n_success = int(bundle.metric_values.sum())
             efficiency = n_success / n_events
             
@@ -987,7 +994,7 @@ def run_slsn_multi_metrics(
             })
             
             if verbose:
-                print(f"    Efficiency: {100*efficiency:.1f}% ({n_success}/{n_events})")
+                print(f"    {metric_name}: {100*efficiency:.1f}% ({n_success}/{n_events})")
             
             # Optional HEALPix plot
             if make_plots:

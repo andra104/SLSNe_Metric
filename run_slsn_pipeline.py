@@ -37,6 +37,17 @@ import argparse
 import sys
 import os
 from pathlib import Path
+from datetime import datetime
+
+
+def _log(msg):
+    """Timestamped print — flushes immediately to SLURM log."""
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}", flush=True)
+
+
+# First output before heavy imports
+_log("Python started — beginning imports")
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -105,6 +116,7 @@ def main():
     # --- resolve repo root and add package to path ---
     repo_root = Path(__file__).resolve().parent
     sys.path.insert(0, str(repo_root / 'py_files'))
+    _log("  importing slsn_metrics (rubin_sim loads here — may take several minutes)...")
 
     from slsn_metrics.paths import (
         get_rate_csv_path, get_shared_output_dir, get_output_dir,
@@ -113,6 +125,7 @@ def main():
     from slsn_metrics.model import LC
     from slsn_metrics.population import generate_SLSN_PopSlicer
     from slsn_metrics.runners import run_slsn_multi_metrics
+    _log("All imports complete — pipeline starting.")
 
     # --- resolve paths ---
     templates_pkl = Path(args.templates_pkl)
@@ -151,14 +164,17 @@ def main():
 
     # --- Step 1: Load templates ---
     print(f"\n{'='*60}")
-    print(f"STEP 1: Loading templates")
+    _log("CELL 2 — Load Templates")
+    t0_step = datetime.now()
     print(f"{'='*60}")
     templates = LC(load_from=str(templates_pkl))
-    print(f"  Loaded {len(templates.data)} templates from {templates_pkl}")
+    elapsed = (datetime.now() - t0_step).total_seconds()
+    _log(f"  Loaded {len(templates.data)} templates from {templates_pkl}  ({elapsed:.1f}s)")
 
     # --- Step 2: Load or generate population ---
     print(f"\n{'='*60}")
-    print(f"STEP 2: Population  [{args.model}]")
+    _log(f"CELL 3 — Population [{args.model}]")
+    t0_step = datetime.now()
     print(f"{'='*60}")
 
     if pop_pkl.exists() and not args.regen_population:
@@ -189,7 +205,8 @@ def main():
         )
 
     n_events = len(population.slice_points['distance'])
-    print(f"  Population size: {n_events:,} events")
+    elapsed = (datetime.now() - t0_step).total_seconds()
+    _log(f"  Population ready: {n_events:,} events  ({elapsed:.1f}s)")
 
     # --- Apply max_events cap (for diagnostic runs) ---
     if args.max_events is not None and n_events > args.max_events:
@@ -217,7 +234,10 @@ def main():
 
     # --- Step 3: Run metrics ---
     print(f"\n{'='*60}")
-    print(f"STEP 3: Metrics  [{args.cadence}]")
+    _log(f"CELL 4 — MAF Metrics [{args.cadence}]")
+    _log(f"  {n_events:,} events x {args.cadence}")
+    _log("  Calling MAF run_all() — silent until complete, this is the long step")
+    t0_step = datetime.now()
     print(f"{'='*60}")
 
     summary = run_slsn_multi_metrics(
@@ -236,8 +256,10 @@ def main():
     )
 
     print(f"\n{'='*60}")
-    print(f"DONE: {args.model} x {args.cadence}")
-    print(f"Results: {output_dir}")
+    elapsed = (datetime.now() - t0_step).total_seconds()
+    _log(f"CELL 5 — Results  |  metrics runtime: {elapsed/60:.1f} min")
+    _log(f"DONE: {args.model} x {args.cadence}")
+    _log(f"Results: {output_dir}")
     print(f"{'='*60}\n")
     print(summary.to_string(index=False))
 

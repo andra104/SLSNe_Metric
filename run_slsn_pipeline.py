@@ -229,7 +229,10 @@ def main():
         save_summary=True,
         make_plots=False,
         verbose=True,
-        store_obs_mode=args.store_obs_mode
+        store_obs_mode=args.store_obs_mode,
+        model_name=args.model,
+        z_min=args.z_min,
+        z_max=args.z_max
     )
 
     print(f"\n{'='*60}")

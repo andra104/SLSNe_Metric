@@ -897,7 +897,10 @@ def run_slsn_multi_metrics(
     save_summary=True,
     make_plots=False,
     verbose=True,
-    store_obs_mode='none'
+    store_obs_mode='none',
+    model_name=None,
+    z_min=0.1,
+    z_max=2.0
 ):
     """
     Run multiple SLSN metrics on cadences and summarize results.
@@ -1003,43 +1006,54 @@ def run_slsn_multi_metrics(
                     bundle, population, cadence, metric_name, output_dir
                 )
         
-        # --- Save metric_values per metric per cadence ---
-        # These .npy files are the per-event 0/1 detection arrays.
-        # Joined with population pickle they give full per-event detail.
-        # Saved before cleanup so they survive if the job dies later.
+        # --- Build run tag for filenames: model_cadence_zrange_YYMMDD ---
+        from datetime import datetime
         import numpy as np
-        for metric_name, bundle in bundles.items():
+        date_tag  = datetime.now().strftime('%y%m%d')
+        model_tag = model_name if model_name else 'unknown'
+        z_tag     = f'z{z_min}-{z_max}'
+        run_tag   = f'{model_tag}_{cadence}_{z_tag}_{date_tag}'
+
+        # --- Save metric_values per metric per cadence ---
+        # Per-event 0/1 arrays. Join with population pickle for full analysis.
+        # Filename encodes model, cadence, z range, and date for traceability.
+        for mname, bundle in bundles.items():
+            # Strip 'SLSN_' prefix for cleaner filename
+            short = mname.replace('SLSN_', '')
             npy_file = os.path.join(
                 output_dir,
-                f"metric_values_{metric_name}_{cadence}.npy"
+                f'metric_values_{short}_{run_tag}.npy'
             )
             np.save(npy_file, bundle.metric_values.filled(0).astype(np.float32))
             if verbose:
-                print(f"  Saved: {npy_file}")
-        
+                print(f'  Saved: {npy_file}')
+
         # --- Incremental summary save after each cadence ---
-        # Protects against job death mid-run. If 3 cadences and job
-        # dies on cadence 3, cadences 1 and 2 are already saved.
+        # Protects against job death. Cadences 1 and 2 survive if job
+        # dies on cadence 3.
         if save_summary:
-            summary_file = os.path.join(output_dir, "slsn_multi_metrics_summary.csv")
+            summary_file = os.path.join(
+                output_dir,
+                f'summary_{run_tag}.csv'
+            )
             partial_df = pd.DataFrame(summary_rows)
             partial_df.to_csv(summary_file, index=False)
             if verbose:
-                print(f"  Partial summary saved ({len(summary_rows)} rows) -> {summary_file}")
-        
+                print(f'  Partial summary ({len(summary_rows)} rows) -> {summary_file}')
+
         # Cleanup temp directory
         import shutil
         shutil.rmtree(temp_dir, ignore_errors=True)
-    
-    # Final summary (same file, now complete)
+
+    # Final summary save (same file, now complete with all cadences)
     summary_df = pd.DataFrame(summary_rows)
-    
-    if save_summary:
-        summary_file = os.path.join(output_dir, "slsn_multi_metrics_summary.csv")
+
+    if save_summary and summary_rows:
+        # Use last run_tag (covers all cadences in this run)
         summary_df.to_csv(summary_file, index=False)
         if verbose:
-            print(f"\nFinal summary saved: {summary_file}")
-    
+            print(f'\nFinal summary saved: {summary_file}')
+
     return summary_df
 
 

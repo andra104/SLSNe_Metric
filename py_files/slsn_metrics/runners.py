@@ -1002,17 +1002,42 @@ def run_slsn_multi_metrics(
                     bundle, population, cadence, metric_name, output_dir
                 )
         
-        # Cleanup
+        # --- Save metric_values per metric per cadence ---
+        # These .npy files are the per-event 0/1 detection arrays.
+        # Joined with population pickle they give full per-event detail.
+        # Saved before cleanup so they survive if the job dies later.
+        import numpy as np
+        for metric_name, bundle in bundles.items():
+            npy_file = os.path.join(
+                output_dir,
+                f"metric_values_{metric_name}_{cadence}.npy"
+            )
+            np.save(npy_file, bundle.metric_values.filled(0).astype(np.float32))
+            if verbose:
+                print(f"  Saved: {npy_file}")
+        
+        # --- Incremental summary save after each cadence ---
+        # Protects against job death mid-run. If 3 cadences and job
+        # dies on cadence 3, cadences 1 and 2 are already saved.
+        if save_summary:
+            summary_file = os.path.join(output_dir, "slsn_multi_metrics_summary.csv")
+            partial_df = pd.DataFrame(summary_rows)
+            partial_df.to_csv(summary_file, index=False)
+            if verbose:
+                print(f"  Partial summary saved ({len(summary_rows)} rows) -> {summary_file}")
+        
+        # Cleanup temp directory
         import shutil
         shutil.rmtree(temp_dir, ignore_errors=True)
     
+    # Final summary (same file, now complete)
     summary_df = pd.DataFrame(summary_rows)
     
     if save_summary:
         summary_file = os.path.join(output_dir, "slsn_multi_metrics_summary.csv")
         summary_df.to_csv(summary_file, index=False)
         if verbose:
-            print(f"\nSummary saved: {summary_file}")
+            print(f"\nFinal summary saved: {summary_file}")
     
     return summary_df
 

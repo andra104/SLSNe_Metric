@@ -78,6 +78,17 @@ def parse_args():
                    help="Random seed. Default 42")
     p.add_argument('--n-cores', type=int, default=1,
                    help="Number of cores for MAF (passed to rubin_sim). Default 1")
+    p.add_argument('--store-obs-mode', default='none',
+                   choices=['none', 'meta', 'full'],
+                   help="Observation storage mode. "
+                        "'none': summary only (production). "
+                        "'meta': per-event metadata, no visit arrays. "
+                        "'full': full visit arrays for diagnostic plots (use with --max-events). "
+                        "Default: none")
+    p.add_argument('--max-events', type=int, default=None,
+                   help="Cap population at this many events after generation. "
+                        "Use with --store-obs-mode full for diagnostic runs (e.g. 50000). "
+                        "Default: None (use full population).")
     p.add_argument('--dry-run', action='store_true',
                    help="Print resolved paths and parameters, then exit.")
 
@@ -180,6 +191,30 @@ def main():
     n_events = len(population.slice_points['distance'])
     print(f"  Population size: {n_events:,} events")
 
+    # --- Apply max_events cap (for diagnostic runs) ---
+    if args.max_events is not None and n_events > args.max_events:
+        print(f"  Capping population: {n_events:,} -> {args.max_events:,} events")
+        import numpy as np
+        rng = np.random.default_rng(args.seed)
+        keep = rng.choice(n_events, size=args.max_events, replace=False)
+        keep = np.sort(keep)
+        from rubin_sim.maf.slicers import UserPointsSlicer
+        sp = population.slice_points
+        ra_sub  = np.degrees(sp['ra'][keep])
+        dec_sub = np.degrees(sp['dec'][keep])
+        sub_pop = UserPointsSlicer(ra=ra_sub, dec=dec_sub, badval=0)
+        for key in sp.keys():
+            try:
+                arr = np.asarray(sp[key])
+                if arr.shape and arr.shape[0] == n_events:
+                    sub_pop.slice_points[key] = arr[keep]
+                else:
+                    sub_pop.slice_points[key] = sp[key]
+            except Exception:
+                sub_pop.slice_points[key] = sp[key]
+        population = sub_pop
+        print(f"  Subsample ready: {args.max_events:,} events")
+
     # --- Step 3: Run metrics ---
     print(f"\n{'='*60}")
     print(f"STEP 3: Metrics  [{args.cadence}]")
@@ -193,7 +228,8 @@ def main():
         mjd0=args.mjd0,
         save_summary=True,
         make_plots=False,
-        verbose=True
+        verbose=True,
+        store_obs_mode=args.store_obs_mode
     )
 
     print(f"\n{'='*60}")

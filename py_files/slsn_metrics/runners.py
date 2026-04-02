@@ -896,7 +896,8 @@ def run_slsn_multi_metrics(
     ignore_triples=True,
     save_summary=True,
     make_plots=False,
-    verbose=True
+    verbose=True,
+    store_obs_mode='none'
 ):
     """
     Run multiple SLSN metrics on cadences and summarize results.
@@ -939,12 +940,12 @@ def run_slsn_multi_metrics(
 
     if metrics_list is None:
         metrics_list = [
-            SLSN_Detect_Metric(lc_model=templates, mjd0=mjd0, 
-                               store_obs_mode="none"),
-            SLSN_CharacterizeMetric(lc_model=templates, mjd0=mjd0, 
-                                     store_obs_mode="none"),
-            SLSN_SpecTriggerMetric(lc_model=templates, mjd0=mjd0, 
-                                    store_obs_mode="none")
+            SLSN_Detect_Metric(lc_model=templates, mjd0=mjd0,
+                               store_obs_mode=store_obs_mode),
+            SLSN_CharacterizeMetric(lc_model=templates, mjd0=mjd0,
+                                    store_obs_mode=store_obs_mode),
+            SLSN_SpecTriggerMetric(lc_model=templates, mjd0=mjd0,
+                                   store_obs_mode=store_obs_mode)
         ]
     
     os.makedirs(output_dir, exist_ok=True)

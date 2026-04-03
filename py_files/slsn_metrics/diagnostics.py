@@ -1902,6 +1902,7 @@ def compare_simulated_vs_observed_rates(population_slicer, z_bins=None):
 def plot_population_rate_vs_redshift(population_slicer,
                                       rate_model='evolving',
                                       R_ref=1e-7, z_ref=0.17, OH_max=8.3,
+                                      tabulated_csv=None, model_name=None,
                                       z_bins=None, save_path=None):
     """
     Diagnostic: simulated event rate per redshift bin vs theoretical curve
@@ -1959,7 +1960,18 @@ def plot_population_rate_vs_redshift(population_slicer,
                edgecolors='k', linewidths=1.5, zorder=3, label='Simulated')
 
     # Theoretical curve
-    if rate_model == 'evolving':
+    if rate_model == 'tabulated':
+        # Ben's CSV-based theory curve — correct curve for tabulated populations
+        from .population import load_tabulated_rate
+        from .paths import get_rate_csv_path
+        csv = tabulated_csv if tabulated_csv else get_rate_csv_path()
+        mname = model_name if model_name else 'fe_dependent'
+        rate_interp = load_tabulated_rate(csv, mname)
+        z_theory = np.linspace(z_vals.min(), z_vals.max(), 100)
+        rate_theory = rate_interp(z_theory)
+        ax.plot(z_theory, rate_theory, 'r-', lw=2.5,
+                label=f'Theory R(z) [{mname}] (Frohmaier+2021)', zorder=2)
+    elif rate_model == 'evolving':
         z_theory = np.linspace(z_vals.min(), z_vals.max(), 100)
         rate_theory = slsn_rate_evolution(z_theory, R_ref, z_ref, OH_max)
         ax.plot(z_theory, rate_theory, 'r-', lw=2.5,

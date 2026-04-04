@@ -94,7 +94,8 @@ python3 run_slsn_pipeline.py \
     --cadence $CADENCE \
     --templates-pkl $TEMPLATES \
     --store-obs-mode none \
-    --n-cores $CPUS
+    --n-cores $CPUS \
+    --n-workers $CPUS
 echo 'End: '\$(date)
 " | awk '{print $NF}')
 

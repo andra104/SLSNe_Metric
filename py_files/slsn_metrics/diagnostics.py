@@ -1903,6 +1903,7 @@ def plot_population_rate_vs_redshift(population_slicer,
                                       rate_model='evolving',
                                       R_ref=1e-7, z_ref=0.17, OH_max=8.3,
                                       tabulated_csv=None, model_name=None,
+                                      sky_fraction=None,
                                       z_bins=None, save_path=None):
     """
     Diagnostic: simulated event rate per redshift bin vs theoretical curve
@@ -1969,11 +1970,18 @@ def plot_population_rate_vs_redshift(population_slicer,
         rate_interp = load_tabulated_rate(csv, mname)
         z_theory = np.linspace(z_vals.min(), z_vals.max(), 100)
         rate_theory = rate_interp(z_theory)
+        if sky_fraction is not None:
+            rate_theory = rate_theory * sky_fraction
+            sky_label = f' x {sky_fraction:.3f} sky'
+        else:
+            sky_label = ' (full sky)'
         ax.plot(z_theory, rate_theory, 'r-', lw=2.5,
-                label=f'Theory R(z) [{mname}] (Frohmaier+2021)', zorder=2)
+                label=f'Theory R(z) [{mname}] (Frohmaier+2021){sky_label}', zorder=2)
     elif rate_model == 'evolving':
         z_theory = np.linspace(z_vals.min(), z_vals.max(), 100)
         rate_theory = slsn_rate_evolution(z_theory, R_ref, z_ref, OH_max)
+        if sky_fraction is not None:
+            rate_theory = rate_theory * sky_fraction
         ax.plot(z_theory, rate_theory, 'r-', lw=2.5,
                 label=f'Theory R(z)  [OH_max={OH_max}]', zorder=2)
 

@@ -89,6 +89,10 @@ def parse_args():
                    help="Random seed. Default 42")
     p.add_argument('--n-cores', type=int, default=1,
                    help="Number of cores for MAF (passed to rubin_sim). Default 1")
+    p.add_argument('--n-workers', type=int, default=1,
+                   help="Number of parallel workers for metrics evaluation. "
+                        "Splits population into N chunks, runs simultaneously. "
+                        "Default 1 (sequential). Use 4 for ~4x speedup on MSI.")
     p.add_argument('--store-obs-mode', default='none',
                    choices=['none', 'meta', 'full'],
                    help="Observation storage mode. "
@@ -240,20 +244,38 @@ def main():
     t0_step = datetime.now()
     print(f"{'='*60}")
 
-    summary = run_slsn_multi_metrics(
-        templates=templates,
-        population=population,
-        cadences=[args.cadence],
-        output_dir=str(output_dir),
-        mjd0=args.mjd0,
-        save_summary=True,
-        make_plots=False,
-        verbose=True,
-        store_obs_mode=args.store_obs_mode,
-        model_name=args.model,
-        z_min=args.z_min,
-        z_max=args.z_max
-    )
+    from slsn_metrics.runners import run_slsn_multi_metrics_parallel
+    if args.n_workers > 1:
+        _log(f"  Using {args.n_workers} parallel workers")
+        summary = run_slsn_multi_metrics_parallel(
+            templates=templates,
+            population=population,
+            cadences=[args.cadence],
+            n_workers=args.n_workers,
+            output_dir=str(output_dir),
+            mjd0=args.mjd0,
+            save_summary=True,
+            verbose=True,
+            store_obs_mode=args.store_obs_mode,
+            model_name=args.model,
+            z_min=args.z_min,
+            z_max=args.z_max
+        )
+    else:
+        summary = run_slsn_multi_metrics(
+            templates=templates,
+            population=population,
+            cadences=[args.cadence],
+            output_dir=str(output_dir),
+            mjd0=args.mjd0,
+            save_summary=True,
+            make_plots=False,
+            verbose=True,
+            store_obs_mode=args.store_obs_mode,
+            model_name=args.model,
+            z_min=args.z_min,
+            z_max=args.z_max
+        )
 
     print(f"\n{'='*60}")
     elapsed = (datetime.now() - t0_step).total_seconds()

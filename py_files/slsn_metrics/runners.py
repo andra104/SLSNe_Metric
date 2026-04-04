@@ -1089,3 +1089,259 @@ def _make_healpix_efficiency_map(bundle, population, cadence, metric_name, outpu
     plt.savefig(os.path.join(output_dir, f'{cadence}_{metric_name}_healpix.png'), dpi=150)
     plt.show()
     plt.close()
+
+# =============================================================================
+# Parallel metrics runner — splits population across N worker processes
+# Each worker runs run_slsn_multi_metrics on its chunk independently.
+# Results are combined in order. ~N x speedup on metrics step.
+# =============================================================================
+
+def _run_chunk(args):
+    """
+    Worker function for parallel metrics evaluation.
+    Runs run_slsn_multi_metrics on one population chunk.
+    Called by ProcessPoolExecutor — must be picklable (module-level function).
+
+    Parameters
+    ----------
+    args : tuple
+        (chunk_idx, chunk_slicer, cadences, db_dir, output_dir,
+         metrics_list, mjd0, ignore_triples, store_obs_mode,
+         model_name, z_min, z_max)
+
+    Returns
+    -------
+    chunk_idx : int
+        Index of this chunk (for ordering)
+    metric_values : dict
+        {metric_name: np.ndarray of 0/1 values for this chunk}
+    summary_rows : list
+        Per-metric summary dicts for this chunk
+    """
+    (chunk_idx, chunk_slicer, cadences, db_dir, output_dir,
+     mjd0, ignore_triples, store_obs_mode,
+     model_name, z_min, z_max) = args
+
+    import os
+    import numpy as np
+    from rubin_sim.maf.metric_bundles import MetricBundle, MetricBundleGroup
+    import rubin_sim.maf.db as mafdb
+    from .metrics import SLSN_Detect_Metric, SLSN_CharacterizeMetric, SLSN_SpecTriggerMetric
+
+    n_chunk = len(chunk_slicer.slice_points['distance'])
+    note    = "scheduler_note not like 'long%'" if ignore_triples else ""
+
+    metrics_list = [
+        SLSN_Detect_Metric(lc_model=None, mjd0=mjd0,
+                           store_obs_mode=store_obs_mode),
+        SLSN_CharacterizeMetric(lc_model=None, mjd0=mjd0,
+                                store_obs_mode=store_obs_mode),
+        SLSN_SpecTriggerMetric(lc_model=None, mjd0=mjd0,
+                               store_obs_mode=store_obs_mode),
+    ]
+
+    summary_rows  = []
+    metric_values = {}
+
+    for cadence in cadences:
+        opsdb    = os.path.join(db_dir, f"{cadence}.db")
+        temp_dir = os.path.join(output_dir,
+                                f"_temp_{cadence}_chunk{chunk_idx}")
+        os.makedirs(temp_dir, exist_ok=True)
+        results_db = mafdb.ResultsDb(out_dir=temp_dir)
+
+        bundles = {
+            m.__class__.__name__: MetricBundle(m, chunk_slicer, note)
+            for m in metrics_list
+        }
+        group = MetricBundleGroup(bundles, opsdb,
+                                  out_dir=temp_dir, results_db=results_db)
+        group.run_all()
+
+        for mname, bundle in bundles.items():
+            n_success = int(bundle.metric_values.sum())
+            summary_rows.append({
+                'cadence': cadence, 'metric': mname,
+                'n_events': n_chunk, 'n_success': n_success,
+                'chunk': chunk_idx
+            })
+            metric_values[mname] = bundle.metric_values.filled(0).astype(np.float32)
+
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    return chunk_idx, metric_values, summary_rows
+
+
+def run_slsn_multi_metrics_parallel(
+    templates,
+    population,
+    cadences,
+    n_workers=4,
+    db_dir=None,
+    output_dir=None,
+    *,
+    mjd0=60980.5,
+    ignore_triples=True,
+    save_summary=True,
+    verbose=True,
+    store_obs_mode='none',
+    model_name=None,
+    z_min=0.1,
+    z_max=2.0
+):
+    """
+    Parallel version of run_slsn_multi_metrics.
+
+    Splits the population into n_workers chunks and evaluates each chunk
+    in a separate process using ProcessPoolExecutor. Results are combined
+    in order. Provides ~n_workers x speedup on the metrics step.
+
+    Parameters
+    ----------
+    templates : LC
+        Template model (must be picklable — confirmed working).
+    population : UserPointsSlicer
+        Full population slicer.
+    cadences : list of str
+        OpSim cadence names.
+    n_workers : int
+        Number of parallel worker processes. Default 4.
+        Set to 1 to fall back to sequential run_slsn_multi_metrics.
+    db_dir, output_dir, mjd0, ignore_triples, save_summary, verbose,
+    store_obs_mode, model_name, z_min, z_max : same as run_slsn_multi_metrics.
+
+    Returns
+    -------
+    summary_df : DataFrame
+        Combined summary across all chunks and cadences.
+    """
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    from rubin_sim.maf.slicers import UserPointsSlicer
+    from datetime import datetime
+    import math
+
+    if n_workers <= 1:
+        return run_slsn_multi_metrics(
+            templates=templates, population=population,
+            cadences=cadences, db_dir=db_dir, output_dir=output_dir,
+            mjd0=mjd0, ignore_triples=ignore_triples,
+            save_summary=save_summary, verbose=verbose,
+            store_obs_mode=store_obs_mode, model_name=model_name,
+            z_min=z_min, z_max=z_max
+        )
+
+    if db_dir is None:
+        db_dir = str(get_cadences_dir())
+    if output_dir is None:
+        output_dir = str(get_output_dir("SLSNe"))
+
+    sp       = population.slice_points
+    n_events = len(sp['distance'])
+    chunk_sz = math.ceil(n_events / n_workers)
+
+    if verbose:
+        print(f"\n{'='*60}")
+        print(f"PARALLEL METRICS  [{n_workers} workers, {n_events:,} events]")
+        print(f"  Chunk size : {chunk_sz:,} events per worker")
+        print(f"  Cadences   : {cadences}")
+        print(f"{'='*60}\n")
+
+    # --- Build population chunks ---
+    chunks = []
+    for i in range(n_workers):
+        lo = i * chunk_sz
+        hi = min(lo + chunk_sz, n_events)
+        if lo >= n_events:
+            break
+
+        ra_sub  = np.degrees(np.asarray(sp['ra'])[lo:hi])
+        dec_sub = np.degrees(np.asarray(sp['dec'])[lo:hi])
+        sub     = UserPointsSlicer(ra=ra_sub, dec=dec_sub, badval=0)
+
+        for key in sp.keys():
+            try:
+                arr = np.asarray(sp[key])
+                if arr.shape and arr.shape[0] == n_events:
+                    sub.slice_points[key] = arr[lo:hi]
+                else:
+                    sub.slice_points[key] = sp[key]
+            except Exception:
+                sub.slice_points[key] = sp[key]
+
+        chunks.append((i, sub))
+
+    # --- Build args for each worker ---
+    worker_args = [
+        (idx, chunk, cadences, db_dir, output_dir,
+         mjd0, ignore_triples, store_obs_mode,
+         model_name, z_min, z_max)
+        for idx, chunk in chunks
+    ]
+
+    # --- Run in parallel ---
+    results = [None] * len(chunks)
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(_run_chunk, arg): arg[0]
+                   for arg in worker_args}
+        for future in as_completed(futures):
+            chunk_idx, metric_values, summary_rows = future.result()
+            results[chunk_idx] = (metric_values, summary_rows)
+            if verbose:
+                total = sum(r['n_success'] for r in summary_rows
+                            if r['metric'] == 'SLSN_Detect_Metric')
+                print(f"  [chunk {chunk_idx}] done — "
+                      f"{total} detections in this chunk")
+
+    # --- Combine results in order ---
+    from datetime import datetime
+    date_tag  = datetime.now().strftime('%y%m%d')
+    model_tag = model_name if model_name else 'unknown'
+    z_tag     = f'z{z_min}-{z_max}'
+
+    os.makedirs(output_dir, exist_ok=True)
+    all_summary_rows = []
+
+    for cadence in cadences:
+        run_tag = f'{model_tag}_{cadence}_{z_tag}_{date_tag}'
+
+        # Get metric names from first chunk
+        metric_names = list(results[0][0].keys())
+
+        # Combine metric_values across chunks in order
+        combined = {}
+        for mname in metric_names:
+            arrays = [results[i][0][mname] for i in range(len(chunks))]
+            combined[mname] = np.concatenate(arrays)
+
+        # Save combined .npy files
+        for mname, vals in combined.items():
+            short    = mname.replace('SLSN_', '')
+            npy_file = os.path.join(output_dir,
+                                    f'metric_values_{short}_{run_tag}.npy')
+            np.save(npy_file, vals)
+            if verbose:
+                print(f'  Saved: {npy_file}')
+
+        # Build combined summary
+        for mname, vals in combined.items():
+            n_success = int(vals.sum())
+            efficiency = n_success / n_events
+            all_summary_rows.append({
+                'cadence': cadence, 'metric': mname,
+                'n_events': n_events, 'n_success': n_success,
+                'efficiency': efficiency
+            })
+            if verbose:
+                print(f'    {mname}: {100*efficiency:.1f}% ({n_success}/{n_events})')
+
+        # Save incremental summary
+        if save_summary:
+            summary_file = os.path.join(
+                output_dir, f'summary_{run_tag}.csv')
+            pd.DataFrame(all_summary_rows).to_csv(summary_file, index=False)
+            if verbose:
+                print(f'  Summary saved: {summary_file}')
+
+    summary_df = pd.DataFrame(all_summary_rows)
+    return summary_df

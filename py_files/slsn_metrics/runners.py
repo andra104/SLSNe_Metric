@@ -1017,9 +1017,14 @@ def run_slsn_multi_metrics(
         # --- Save metric_values per metric per cadence ---
         # Per-event 0/1 arrays. Join with population pickle for full analysis.
         # Filename encodes model, cadence, z range, and date for traceability.
+        # Consistent lowercase short names for filenames
+        _name_map = {
+            'SLSN_Detect_Metric':      'detect',
+            'SLSN_CharacterizeMetric': 'characterize',
+            'SLSN_SpecTriggerMetric':  'spectrigger',
+        }
         for mname, bundle in bundles.items():
-            # Strip 'SLSN_' prefix for cleaner filename
-            short = mname.replace('SLSN_', '')
+            short = _name_map.get(mname, mname.replace('SLSN_', '').lower())
             npy_file = os.path.join(
                 output_dir,
                 f'metric_values_{short}_{run_tag}.npy'
@@ -1118,7 +1123,7 @@ def _run_chunk(args):
     summary_rows : list
         Per-metric summary dicts for this chunk
     """
-    (chunk_idx, chunk_slicer, cadences, db_dir, output_dir,
+    (chunk_idx, chunk_slicer, templates, cadences, db_dir, output_dir,
      mjd0, ignore_triples, store_obs_mode,
      model_name, z_min, z_max) = args
 
@@ -1132,11 +1137,11 @@ def _run_chunk(args):
     note    = "scheduler_note not like 'long%'" if ignore_triples else ""
 
     metrics_list = [
-        SLSN_Detect_Metric(lc_model=None, mjd0=mjd0,
+        SLSN_Detect_Metric(lc_model=templates, mjd0=mjd0,
                            store_obs_mode=store_obs_mode),
-        SLSN_CharacterizeMetric(lc_model=None, mjd0=mjd0,
+        SLSN_CharacterizeMetric(lc_model=templates, mjd0=mjd0,
                                 store_obs_mode=store_obs_mode),
-        SLSN_SpecTriggerMetric(lc_model=None, mjd0=mjd0,
+        SLSN_SpecTriggerMetric(lc_model=templates, mjd0=mjd0,
                                store_obs_mode=store_obs_mode),
     ]
 
@@ -1273,7 +1278,7 @@ def run_slsn_multi_metrics_parallel(
 
     # --- Build args for each worker ---
     worker_args = [
-        (idx, chunk, cadences, db_dir, output_dir,
+        (idx, chunk, templates, cadences, db_dir, output_dir,
          mjd0, ignore_triples, store_obs_mode,
          model_name, z_min, z_max)
         for idx, chunk in chunks
@@ -1314,9 +1319,14 @@ def run_slsn_multi_metrics_parallel(
             arrays = [results[i][0][mname] for i in range(len(chunks))]
             combined[mname] = np.concatenate(arrays)
 
-        # Save combined .npy files
+        # Save combined .npy files with consistent lowercase names
+        _name_map = {
+            'SLSN_Detect_Metric':      'detect',
+            'SLSN_CharacterizeMetric': 'characterize',
+            'SLSN_SpecTriggerMetric':  'spectrigger',
+        }
         for mname, vals in combined.items():
-            short    = mname.replace('SLSN_', '')
+            short = _name_map.get(mname, mname.replace('SLSN_', '').lower())
             npy_file = os.path.join(output_dir,
                                     f'metric_values_{short}_{run_tag}.npy')
             np.save(npy_file, vals)

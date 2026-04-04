@@ -62,8 +62,10 @@ def parse_args():
     p.add_argument('--model', required=True,
                    choices=['naive', 'fe_dependent', 'o_dependent'],
                    help="Rate model to use.")
-    p.add_argument('--cadence', required=True,
-                   help="OpSim cadence name (without .db), e.g. baseline_v3.4")
+    p.add_argument('--cadences', required=True, nargs='+',
+                   help="One or more OpSim cadence names (without .db). "
+                        "Multiple cadences run in parallel when --n-workers > 1. "
+                        "e.g. --cadences baseline_v5.1.1_10yrs four_roll_v5.0.0_10yrs")
     p.add_argument('--templates-pkl', required=True,
                    help="Path to templates pickle file.")
 
@@ -137,14 +139,15 @@ def main():
     shared_dir    = get_shared_output_dir('SLSNe')
     pop_pkl       = shared_dir / f"population_{args.model}.pkl"
     output_dir    = get_output_dir('SLSNe', subdir=args.model)
-    cadence_db    = get_cadence_path(args.cadence)
 
     # --- dry run: print config and exit ---
     if args.dry_run:
         print("\n=== DRY RUN — resolved configuration ===")
         print(f"  model          : {args.model}")
-        print(f"  cadence        : {args.cadence}")
-        print(f"  cadence db     : {cadence_db}  {'OK' if cadence_db.exists() else 'MISSING'}")
+        print(f"  cadences       : {args.cadences}")
+        for c in args.cadences:
+            cdb = get_cadence_path(c)
+            print(f"  cadence db     : {cdb}  {'OK' if cdb.exists() else 'MISSING'}")
         print(f"  templates pkl  : {templates_pkl}  {'OK' if templates_pkl.exists() else 'MISSING'}")
         print(f"  rate CSV       : {rate_csv}  {'OK' if rate_csv.exists() else 'MISSING'}")
         print(f"  population pkl : {pop_pkl}  {'exists' if pop_pkl.exists() else 'will generate'}")
@@ -160,8 +163,10 @@ def main():
     # --- validate inputs ---
     if not templates_pkl.exists():
         sys.exit(f"ERROR: templates pickle not found: {templates_pkl}")
-    if not cadence_db.exists():
-        sys.exit(f"ERROR: cadence database not found: {cadence_db}")
+    for c in args.cadences:
+        cdb = get_cadence_path(c)
+        if not cdb.exists():
+            sys.exit(f"ERROR: cadence database not found: {cdb}")
     if not rate_csv.exists():
         sys.exit(f"ERROR: rate CSV not found: {rate_csv}\n"
                  f"       Copy fiducial_models.csv to {rate_csv} or pass --rate-csv")
@@ -177,7 +182,7 @@ def main():
 
     # --- Step 2: Load or generate population ---
     print(f"\n{'='*60}")
-    _log(f"CELL 3 — Population [{args.model}]")
+    _log(f"CELL 3 — Population [{args.model}] for {len(args.cadences)} cadence(s)")
     t0_step = datetime.now()
     print(f"{'='*60}")
 
@@ -238,19 +243,20 @@ def main():
 
     # --- Step 3: Run metrics ---
     print(f"\n{'='*60}")
-    _log(f"CELL 4 — MAF Metrics [{args.cadence}]")
-    _log(f"  {n_events:,} events x {args.cadence}")
+    _log(f"CELL 4 — MAF Metrics {args.cadences}")
+    _log(f"  {n_events:,} events x {len(args.cadences)} cadence(s)")
     _log("  Calling MAF run_all() — silent until complete, this is the long step")
     t0_step = datetime.now()
     print(f"{'='*60}")
 
     from slsn_metrics.runners import run_slsn_multi_metrics_parallel
-    if args.n_workers > 1:
-        _log(f"  Using {args.n_workers} parallel workers")
+    if args.n_workers > 1 and len(args.cadences) > 1:
+        _log(f"  Using {args.n_workers} parallel workers for "
+             f"{len(args.cadences)} cadences")
         summary = run_slsn_multi_metrics_parallel(
             templates=templates,
             population=population,
-            cadences=[args.cadence],
+            cadences=args.cadences,
             n_workers=args.n_workers,
             output_dir=str(output_dir),
             mjd0=args.mjd0,
@@ -265,7 +271,7 @@ def main():
         summary = run_slsn_multi_metrics(
             templates=templates,
             population=population,
-            cadences=[args.cadence],
+            cadences=args.cadences,
             output_dir=str(output_dir),
             mjd0=args.mjd0,
             save_summary=True,
@@ -280,7 +286,7 @@ def main():
     print(f"\n{'='*60}")
     elapsed = (datetime.now() - t0_step).total_seconds()
     _log(f"CELL 5 — Results  |  metrics runtime: {elapsed/60:.1f} min")
-    _log(f"DONE: {args.model} x {args.cadence}")
+    _log(f"DONE: {args.model} x {args.cadences}")
     _log(f"Results: {output_dir}")
     print(f"{'='*60}\n")
     print(summary.to_string(index=False))

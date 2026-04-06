@@ -1046,7 +1046,11 @@ def run_slsn_multi_metrics(
             if verbose:
                 print(f'  Partial summary ({len(summary_rows)} rows) -> {summary_file}')
 
-        # Cleanup temp directory
+        # Cleanup temp directory — close DB first to release file lock
+        try:
+            resultsDb.close()
+        except Exception:
+            pass
         import shutil
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -1193,6 +1197,11 @@ def _run_cadence_worker(args):
     if verbose:
         print(f'  Summary: {summary_file}', flush=True)
 
+    # Close DB before cleanup to release file lock
+    try:
+        results_db.close()
+    except Exception:
+        pass
     shutil.rmtree(temp_dir, ignore_errors=True)
     return cadence, summary_rows
 

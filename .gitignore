@@ -119,3 +119,26 @@ ENV/
 
 # Keep documentation
 !docs/**/*.pkl  # If you have example pickles in docs
+
+# =============================================================================
+# ADDITIONS
+# =============================================================================
+# Old/legacy code
+py_files/old/
+
+# Notebooks — regenerable outputs and caches
+notebooks/output/
+notebooks/population_evolving_*.png
+notebooks/*.mp4
+notebooks/*.gif
+notebooks/healpix_cache.pkl
+notebooks/*.png
+
+# Local/scratch notebooks — not for version control
+notebooks/local_SLSNe_notebook.ipynb
+notebooks/local_SLSNe_notebook_old.ipynb
+notebooks/SLSNe_summaries.ipynb
+notebooks/all_run.ipynb
+
+# egg-info
+py_files/*.egg-info/

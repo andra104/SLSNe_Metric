@@ -695,7 +695,8 @@ def generate_SLSN_PopSlicer(lc_model,
                              healpix_cache_file: Path | None = None,
                              save_to=None,
                              load_from=None,
-                             make_debug_plots=True):
+                             make_debug_plots=True,
+                             max_events=None):
     """
     Generate SLSN population with volumetric sampling and cached sky coordinates.
 
@@ -745,6 +746,12 @@ def generate_SLSN_PopSlicer(lc_model,
         Load population from pickle (bypasses all generation logic).
     make_debug_plots : bool
         Whether to call plot_population_diagnostics. Default True.
+    max_events : int, optional
+        Cap the population to at most this many events. The subsample is
+        applied BEFORE the MAF ``UserPointsSlicer`` is constructed so that
+        internal indexing remains consistent. When combined with
+        ``load_from``, the loaded population is subsampled in-memory before
+        the slicer is built — no re-generation needed.
 
     Returns
     -------
@@ -765,10 +772,27 @@ def generate_SLSN_PopSlicer(lc_model,
     if load_from and os.path.exists(load_from):
         with open(load_from, 'rb') as f:
             slice_data = pickle.load(f)
-        slicer = UserPointsSlicer(ra=slice_data['ra'], dec=slice_data['dec'], badval=0)
-        slicer.slice_points.update(slice_data)
         n_loaded = len(slice_data['ra'])
         print(f"[LOAD] Loaded {n_loaded} SLSNe from {load_from}")
+
+    # Cap population BEFORE building the slicer so MAF indexing is consistent
+        if max_events is not None and n_loaded > max_events:
+            rng_sub = np.random.default_rng(seed)
+            keep = np.sort(rng_sub.choice(n_loaded, size=max_events, replace=False))
+            slice_data = {
+                k: (np.asarray(v)[keep]
+                    if (hasattr(v, '__len__') and np.asarray(v).shape
+                        and np.asarray(v).shape[0] == n_loaded)
+                    else v)
+                for k, v in slice_data.items()
+            }
+            # ← ADD THIS: reassign sid to sequential 0-based integers
+            # MAF uses sid as an array index internally — must match new size
+            slice_data['sid'] = np.arange(max_events)
+            print(f"[LOAD] Subsampled to {max_events} events (max_events cap)")
+
+        slicer = UserPointsSlicer(ra=slice_data['ra'], dec=slice_data['dec'], badval=0)
+        slicer.slice_points.update(slice_data)
         if make_debug_plots:
             sp = slicer.slice_points
             plot_population_diagnostics(
@@ -903,6 +927,20 @@ def generate_SLSN_PopSlicer(lc_model,
               f"({100 * n_after / n_before:.1f}% retained)")
 
     n_events = len(ra)  # final count after all cuts
+
+    # ------------------------------------------------------------------
+    # max_events cap — applied BEFORE building the MAF slicer so that
+    # internal indexing stays consistent.  Post-hoc slicing of
+    # slice_points breaks MAF's UserPointsSlicer index assumptions.
+    # ------------------------------------------------------------------
+    if max_events is not None and n_events > max_events:
+        keep = np.sort(rng.choice(n_events, size=max_events, replace=False))
+        ra         = ra[keep]
+        dec        = dec[keep]
+        coords     = coords[keep]
+        z_vals_raw = z_vals_raw[keep]
+        n_events   = max_events
+        print(f"[max_events] Capped population to {max_events} events")
 
     z_vals   = z_vals_raw
     distances = cosmo.comoving_distance(z_vals).to_value(u.Mpc)

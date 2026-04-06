@@ -811,7 +811,7 @@ def compute_slsn_properties(df_cov, templates_file):
     df_props = pd.DataFrame(rows)
     return df_cov.merge(df_props, on='tpl_idx', how='left')
 
-def assess_literature_coverage(df_cov):
+def assess_literature_coverage(df_cov, output_dir=None):
     """Compare template distributions to published SLSN samples."""
     lit_ranges = {
         'M_peak_r': (-23.0, -19.5),
@@ -853,7 +853,9 @@ def assess_literature_coverage(df_cov):
             gaps[param] = "good"
     
     plt.tight_layout()
-    plt.savefig("SLSN_template_coverage_vs_literature.png", dpi=150)
+    _out = (Path(output_dir) / "SLSN_template_coverage_vs_literature.png"
+            if output_dir else Path("SLSN_template_coverage_vs_literature.png"))
+    plt.savefig(_out, dpi=150)
     plt.show()
     
     print("\n=== Coverage Assessment ===")

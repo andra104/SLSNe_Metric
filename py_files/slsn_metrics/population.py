@@ -53,10 +53,16 @@ dust_model = DustValues()
 # Used for diagnostic plots and rate validation.
 # =============================================================================
 
+# OBSERVED_RATES — used only in diagnostic plots, not in science results.
+# All values verified from published papers:
+#   Quimby+2013  (arXiv:1302.0911) abstract: 32+77/-26 Gpc^-3 yr^-1 at z=0.17
+#   Prajs+2017   (arXiv:1605.05250) abstract: 91+76/-36 Gpc^-3 yr^-1 at z=1.13
+#   Frohmaier+21 (staa3607) abstract: 35+25/-13 Gpc^-3 yr^-1 at z=0.17
+#   Cooke+2012: photometric only, ~400 Gpc^-3 yr^-1 at z=2-4 — excluded as uncertain
 OBSERVED_RATES = [
-    {'z': 0.17, 'rate': 1e-7,   'err_low': 0.3e-7, 'err_high': 0.3e-7, 'ref': 'Quimby+13'},
-    {'z': 0.3,  'rate': 3.5e-7, 'err_low': 1.0e-7, 'err_high': 1.5e-7, 'ref': 'Prajs+17'},
-    {'z': 2.0,  'rate': 1.5e-6, 'err_low': 0.5e-6, 'err_high': 0.8e-6, 'ref': 'Cooke+12'},
+    {'z': 0.17, 'rate': 3.2e-8, 'err_low': 2.6e-8, 'err_high': 7.7e-8, 'ref': 'Quimby+13'},
+    {'z': 1.13, 'rate': 9.1e-8, 'err_low': 3.6e-8, 'err_high': 7.6e-8, 'ref': 'Prajs+17'},
+    {'z': 0.17, 'rate': 3.5e-8, 'err_low': 1.3e-8, 'err_high': 2.5e-8, 'ref': 'Frohmaier+21'},
 ]
 
 # Frohmaier+2021 anchor — used by tabulated rate model

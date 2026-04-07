@@ -950,6 +950,8 @@ def run_slsn_multi_metrics(
                                     store_obs_mode=store_obs_mode),
             SLSN_VillarMetric(lc_model=templates, mjd0=mjd0,
                               store_obs_mode=store_obs_mode),
+            SLSN_ELAsTiCC_Metric(lc_model=templates, mjd0=mjd0,
+                                  store_obs_mode=store_obs_mode),
             SLSN_SpecTriggerMetric(lc_model=templates, mjd0=mjd0,
                                    store_obs_mode=store_obs_mode)
         ]
@@ -1025,6 +1027,7 @@ def run_slsn_multi_metrics(
             'SLSN_Detect_Metric':      'detect',
             'SLSN_CharacterizeMetric': 'characterize',
             'SLSN_VillarMetric':       'villar',
+            'SLSN_ELAsTiCC_Metric':    'elasticc',
             'SLSN_SpecTriggerMetric':  'spectrigger',
         }
         for mname, bundle in bundles.items():
@@ -1139,7 +1142,7 @@ def _run_cadence_worker(args):
     import rubin_sim.maf.db as mafdb
     from rubin_sim.maf.metric_bundles import MetricBundle, MetricBundleGroup
     import shutil
-    from .metrics import SLSN_Detect_Metric, SLSN_CharacterizeMetric, SLSN_VillarMetric, SLSN_SpecTriggerMetric
+    from .metrics import SLSN_Detect_Metric, SLSN_CharacterizeMetric, SLSN_VillarMetric, SLSN_ELAsTiCC_Metric, SLSN_SpecTriggerMetric
 
     n_events = len(population.slice_points['distance'])
     note     = "scheduler_note not like 'long%'" if ignore_triples else ""
@@ -1151,6 +1154,8 @@ def _run_cadence_worker(args):
                                 store_obs_mode=store_obs_mode),
         SLSN_VillarMetric(lc_model=templates, mjd0=mjd0,
                           store_obs_mode=store_obs_mode),
+        SLSN_ELAsTiCC_Metric(lc_model=templates, mjd0=mjd0,
+                              store_obs_mode=store_obs_mode),
         SLSN_SpecTriggerMetric(lc_model=templates, mjd0=mjd0,
                                store_obs_mode=store_obs_mode),
     ]
@@ -1177,6 +1182,7 @@ def _run_cadence_worker(args):
         'SLSN_Detect_Metric':      'detect',
         'SLSN_CharacterizeMetric': 'characterize',
         'SLSN_VillarMetric':       'villar',
+        'SLSN_ELAsTiCC_Metric':    'elasticc',
         'SLSN_SpecTriggerMetric':  'spectrigger',
     }
 

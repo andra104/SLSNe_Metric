@@ -126,6 +126,7 @@ from .metrics import (
     SLSN_Detect_Metric,
     SLSN_CharacterizeMetric,
     SLSN_VillarMetric,
+    SLSN_ELAsTiCC_Metric,
     SLSN_SpecTriggerMetric,
     Detect_Metric,  # alias
     detect_slsn,
@@ -204,6 +205,7 @@ __all__ = [
     "SLSN_Detect_Metric",
     "SLSN_CharacterizeMetric",
     "SLSN_VillarMetric",
+    "SLSN_ELAsTiCC_Metric",
     "SLSN_SpecTriggerMetric",
     "detect_slsn",
     "evaluate_slsn",

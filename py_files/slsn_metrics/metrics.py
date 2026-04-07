@@ -620,6 +620,89 @@ class SLSN_VillarMetric(SLSN_Base_Metric):
 # Spectroscopic trigger metric (redesigned)
 # =============================================================================
 
+
+# =============================================================================
+# PLAsTiCC / ELAsTiCC alert-pipeline trigger metric
+# =============================================================================
+
+class SLSN_ELAsTiCC_Metric(SLSN_Base_Metric):
+    """
+    Alert-pipeline trigger criterion from PLAsTiCC/ELAsTiCC
+    (Kessler+2019, PASP 131, 094501, Section 6.3).
+
+    Confirmed by Ved Shah (private communication) as identical
+    for ELAsTiCC. Cite both Kessler+2019 and Shah+2024/2025.
+
+    Asks: would the Rubin alert pipeline write an alert for this event?
+    This is a necessary but not sufficient condition for any science
+    follow-up. Much less strict than SLSN_Detect_Metric (Firth+2015).
+
+    Criterion:
+      >= 2 observations with |S/N| > 3, separated by >= 30 minutes.
+      Absolute value of S/N is used — both flux increases and decreases
+      count, permissive by design to include all variable transients.
+
+    Note: PLAsTiCC used S/N_true rather than measured S/N, flagged as
+    a known mistake in Kessler+2019 footnote 57. We use our simulated
+    SNR which is the equivalent quantity in this pipeline.
+
+    References
+    ----------
+    Kessler+2019 : PASP 131, 094501, Section 6.3 (PLAsTiCC trigger model)
+    Shah+2024    : 2024MNRAS.528.1109S (ELAsTiCC, confirmed same criteria)
+    """
+
+    def __init__(self, min_snr=3.0, min_sep_minutes=30.0, **kwargs):
+        super().__init__(**kwargs)
+        self.metricName   = 'SLSN_ELAsTiCC'
+        self.min_snr      = min_snr
+        self.min_sep_days = min_sep_minutes / 1440.0   # convert minutes -> days
+        self.obs_records  = {}
+
+    def run(self, dataSlice, slice_point=None):
+        snr, filters, times, obs_record = evaluate_slsn(
+            self, dataSlice, slice_point, return_full_obs=True
+        )
+
+        elasticc_pass = False
+
+        if obs_record is None or snr.size == 0:
+            if self.store_obs_mode in ("full", "meta"):
+                self.obs_records[slice_point['sid']] = {
+                    'elasticc_pass': False,
+                    'sid':       int(slice_point['sid']),
+                    'z':         float(slice_point['z']),
+                    'ra':        float(slice_point['ra']),
+                    'dec':       float(slice_point['dec']),
+                    'peak_time': float(slice_point['peak_time']),
+                }
+            return 0.0
+
+        # |S/N| > min_snr — absolute value, both flux directions count
+        good      = np.abs(snr) > self.min_snr
+        good_times = times[good]
+
+        # Need >= 2 such detections separated by >= min_sep_days (30 min default)
+        if np.sum(good) >= 2:
+            t_sorted = np.sort(good_times)
+            for i in range(len(t_sorted) - 1):
+                if t_sorted[i + 1] - t_sorted[i] >= self.min_sep_days:
+                    elasticc_pass = True
+                    break
+
+        if self.store_obs_mode in ("full", "meta"):
+            self.obs_records[slice_point['sid']] = {
+                'elasticc_pass': elasticc_pass,
+                'n_good_det':    int(np.sum(good)),
+                'sid':       int(slice_point['sid']),
+                'z':         float(slice_point['z']),
+                'ra':        float(slice_point['ra']),
+                'dec':       float(slice_point['dec']),
+                'peak_time': float(slice_point['peak_time']),
+            }
+
+        return 1.0 if elasticc_pass else 0.0
+
 class SLSN_SpecTriggerMetric(SLSN_Base_Metric):
     """
     Spectroscopic trigger metric — redesigned based on SLSN physics.

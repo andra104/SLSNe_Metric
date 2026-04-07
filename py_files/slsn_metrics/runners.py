@@ -14,7 +14,7 @@ import rubin_sim.maf.db as db
 import astropy.units as u
 from astropy.cosmology import Planck18 as cosmo
 from rubin_sim.maf.metric_bundles import MetricBundle, MetricBundleGroup
-from .metrics import SLSN_Detect_Metric, SLSN_CharacterizeMetric, SLSN_SpecTriggerMetric
+from .metrics import SLSN_Detect_Metric, SLSN_CharacterizeMetric, SLSN_VillarMetric, SLSN_SpecTriggerMetric
 from .diagnostics import plot_healpix_efficiency
 from .paths import (
     get_repo_root,
@@ -947,6 +947,8 @@ def run_slsn_multi_metrics(
                                store_obs_mode=store_obs_mode),
             SLSN_CharacterizeMetric(lc_model=templates, mjd0=mjd0,
                                     store_obs_mode=store_obs_mode),
+            SLSN_VillarMetric(lc_model=templates, mjd0=mjd0,
+                              store_obs_mode=store_obs_mode),
             SLSN_SpecTriggerMetric(lc_model=templates, mjd0=mjd0,
                                    store_obs_mode=store_obs_mode)
         ]
@@ -1021,6 +1023,7 @@ def run_slsn_multi_metrics(
         _name_map = {
             'SLSN_Detect_Metric':      'detect',
             'SLSN_CharacterizeMetric': 'characterize',
+            'SLSN_VillarMetric':       'villar',
             'SLSN_SpecTriggerMetric':  'spectrigger',
         }
         for mname, bundle in bundles.items():
@@ -1135,7 +1138,7 @@ def _run_cadence_worker(args):
     import rubin_sim.maf.db as mafdb
     from rubin_sim.maf.metric_bundles import MetricBundle, MetricBundleGroup
     import shutil
-    from .metrics import SLSN_Detect_Metric, SLSN_CharacterizeMetric, SLSN_SpecTriggerMetric
+    from .metrics import SLSN_Detect_Metric, SLSN_CharacterizeMetric, SLSN_VillarMetric, SLSN_SpecTriggerMetric
 
     n_events = len(population.slice_points['distance'])
     note     = "scheduler_note not like 'long%'" if ignore_triples else ""
@@ -1170,6 +1173,7 @@ def _run_cadence_worker(args):
     _name_map = {
         'SLSN_Detect_Metric':      'detect',
         'SLSN_CharacterizeMetric': 'characterize',
+        'SLSN_VillarMetric':       'villar',
         'SLSN_SpecTriggerMetric':  'spectrigger',
     }
 

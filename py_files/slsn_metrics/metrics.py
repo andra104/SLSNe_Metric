@@ -478,100 +478,297 @@ class SLSN_CharacterizeMetric(SLSN_Base_Metric):
             return 1.0 if characterized else 0.0
 
 # =============================================================================
-# Spectroscopic trigger metric
+# Villar+2018 light curve quality metrics
 # =============================================================================
 
-class SLSN_SpecTriggerMetric(SLSN_Base_Metric):
+class SLSN_VillarMetric(SLSN_Base_Metric):
     """
-    Spectroscopic trigger metric (near-peak brightness + color).
-    
-    Requires detection plus:
-    - ≥1 epoch with SNR≥5 within ±5 days of peak
-    - min(mag) near peak < 21.0
-    - Optional: (g-r) < 0.3 near peak
+    Light curve quality metrics from Villar, Nicholl & Berger 2018
+    (ApJ 869, 166), Table 4.
+
+    Implements three of their 19 metrics that best predict parameter
+    recoverability. Does NOT require detection (Firth+2015) — these are
+    independent photometric quality cuts on the raw cadence sampling,
+    exactly as defined in Villar+2018.
+
+    Sub-criteria (each stored independently):
+      M1: > n_det_total SNR>=5 detections across all filters
+          (their baseline "discovery" criterion, ~9600/yr in WFD)
+      M2: > n_det_peak SNR>=5 detections within 1 mag of peak brightness
+          ("during peak", ~2690/yr in WFD)
+      M3: Measurable duration in r-band — both rise AND decline by
+          1 magnitude observed (their highest information-content metric,
+          ~960/yr in WFD)
+
+    The metric returns 1.0 if ANY sub-criterion passes. All three
+    sub-criterion results are stored in obs_records for comparison.
+
+    Parameters
+    ----------
+    n_det_total : int
+        Minimum total SNR>=5 detections. Default 10 (Villar+2018 Table 4).
+    n_det_peak : int
+        Minimum detections within 1 mag of peak. Default 20 (Villar+2018).
+    peak_window_mag : float
+        "Near peak" defined as within this many mags of peak. Default 1.0.
+
+    Notes
+    -----
+    obs_records storage: only in "full" or "meta" mode (not "none").
+    Unlike SLSN_Detect_Metric, per-event records are not needed for
+    the production count metric — summary metric_values are sufficient.
+
+    References
+    ----------
+    Villar, Nicholl & Berger 2018, ApJ 869, 166, Table 4.
     """
-    
-    def __init__(self, **kwargs):
+
+    def __init__(self, n_det_total=10, n_det_peak=20,
+                 peak_window_mag=1.0, **kwargs):
         super().__init__(**kwargs)
-        self.metricName = 'SLSN_SpecTrigger'
+        self.metricName = 'SLSN_Villar'
+        self.n_det_total = n_det_total
+        self.n_det_peak = n_det_peak
+        self.peak_window_mag = peak_window_mag
         self.obs_records = {}
 
     def run(self, dataSlice, slice_point=None):
         snr, filters, times, obs_record = evaluate_slsn(
             self, dataSlice, slice_point, return_full_obs=True
         )
-        
-        # Initialize as failed
-        spec_triggered = False
-        min_mag_near_peak = np.nan
-        has_g_near_peak = False
-        has_r_near_peak = False
-        
-        # If no observations
+
+        m1_pass = False  # >10 total detections
+        m2_pass = False  # >20 during peak
+        m3_pass = False  # measurable duration in r
+
+        if obs_record is None or snr.size == 0:
+            if self.store_obs_mode == "full":
+                self.obs_records[slice_point['sid']] = {
+                    'villar_pass': False,
+                    'm1_total_det': False,
+                    'm2_peak_det': False,
+                    'm3_duration_r': False,
+                    'sid': int(slice_point['sid']),
+                    'z': float(slice_point['z']),
+                    'peak_time': float(slice_point['peak_time']),
+                }
+            return 0.0
+
+        mags    = np.asarray(obs_record['mag_obs'], float)
+        mjd_obs = np.asarray(obs_record['mjd_obs'], float)
+        good    = snr >= 5
+
+        # --- M1: >n_det_total SNR>=5 detections ---
+        m1_pass = int(np.sum(good)) > self.n_det_total
+
+        # --- M2: >n_det_peak detections within 1 mag of peak ---
+        peak_mjd = self.mjd0 + float(slice_point['peak_time'])
+        if np.any(good):
+            peak_mag_obs = np.nanmin(mags[good]) if np.any(good) else np.nan
+            if np.isfinite(peak_mag_obs):
+                near_peak = good & (mags <= peak_mag_obs + self.peak_window_mag)
+                m2_pass = int(np.sum(near_peak)) > self.n_det_peak
+
+        # --- M3: Measurable duration in r-band ---
+        # Both rise (pre-peak brightening by >=1 mag) and decline
+        # (post-peak fading by >=1 mag) must be observed in r-band.
+        r_good = good & (filters == 'r')
+        if np.sum(r_good) >= 2:
+            t_r = mjd_obs[r_good]
+            m_r = mags[r_good]
+            order = np.argsort(t_r)
+            t_r = t_r[order]
+            m_r = m_r[order]
+
+            peak_mag_r = np.nanmin(m_r)
+            peak_t_r   = t_r[np.argmin(m_r)]
+
+            # Rise: at least one obs >=1 mag fainter than peak BEFORE peak
+            pre  = t_r < peak_t_r
+            post = t_r > peak_t_r
+
+            rise_measured     = np.any(pre)  and np.any(m_r[pre]  >= peak_mag_r + 1.0)
+            decline_measured  = np.any(post) and np.any(m_r[post] >= peak_mag_r + 1.0)
+            m3_pass = rise_measured and decline_measured
+
+        villar_pass = m1_pass or m2_pass or m3_pass
+
+        # Deliberate: only store per-event records in full/meta mode.
+        # Unlike SLSN_Detect_Metric (which stores in all modes including "none"),
+        # VillarMetric sub-criteria are aggregated counts — per-event records
+        # are only needed for diagnostic analysis, not routine summary runs.
+        if self.store_obs_mode in ("full", "meta"):
+            obs_record.update({
+                'villar_pass':    villar_pass,
+                'm1_total_det':   m1_pass,
+                'm2_peak_det':    m2_pass,
+                'm3_duration_r':  m3_pass,
+                'sid':  int(slice_point['sid']),
+                'z':    float(slice_point['z']),
+                'ra':   float(slice_point['ra']),
+                'dec':  float(slice_point['dec']),
+                'distance_Mpc': float(slice_point['distance']),
+                'ebv':  float(slice_point['ebv']),
+                'peak_time': float(slice_point['peak_time']),
+            })
+            self.obs_records[slice_point['sid']] = obs_record
+
+        return 1.0 if villar_pass else 0.0
+
+
+# =============================================================================
+# Spectroscopic trigger metric (redesigned)
+# =============================================================================
+
+class SLSN_SpecTriggerMetric(SLSN_Base_Metric):
+    """
+    Spectroscopic trigger metric — redesigned based on SLSN physics.
+
+    Asks whether Rubin detected enough of the SLSN near peak to
+    substantiate a spectroscopic follow-up request. This requires
+    catching the event at its highest energy output — when temperature
+    and brightness best distinguish it from contaminants — with enough
+    observations to confirm the slow evolution characteristic of SLSNe.
+
+    Distinct from CharacterizeMetric, which requires coverage of the
+    full light curve before and after peak. SpecTrigger only asks
+    about the peak window when spectroscopy would be actionable.
+
+    Requires detection first (Firth+2015), then:
+      1. >=n_near_peak SNR>=5 detections within ±peak_window days of peak
+         (must catch it near maximum, not just on decline)
+      2. >=2 filters detected near peak
+         (color information to distinguish from contaminants)
+      3. Peak apparent magnitude brighter than mag_limit
+         (spectrograph feasibility — 23.5 is educated guess for 4-8m ToO;
+          pending confirmation from instrumentation team)
+      4. Slow evolution: Δmag < decline_limit over any 30-day window
+         near peak (distinguishes SLSNe from faster transients)
+
+    Parameters
+    ----------
+    mag_limit : float
+        Faintest apparent magnitude for spectroscopic follow-up.
+        Default 23.5 — educated estimate for 4-8m class telescope ToO.
+        ⚠ Pending confirmation from instrumentation collaborators.
+    peak_window : float
+        Days around peak to require detections. Default 20.0.
+        Justified by 15-50 day rise times (Nicholl+2021).
+    n_near_peak : int
+        Minimum detections within peak_window. Default 2.
+    decline_limit : float
+        Max Δmag over 30 days near peak. Default 1.0.
+        SLSNe have tdur > 50 days (Nicholl+2021).
+
+    References
+    ----------
+    Nicholl+2021 : rise timescales 15-50 days, T=12,000-15,000K at peak
+    Aamer+2025   : temperature evolution, blue continuum at peak
+    Villar+2018  : peak magnitude distribution 19-23 mag in WFD
+    """
+
+    def __init__(self, mag_limit=23.5, peak_window=20.0,
+                 n_near_peak=2, decline_limit=1.0, **kwargs):
+        super().__init__(**kwargs)
+        self.metricName = 'SLSN_SpecTrigger'
+        self.mag_limit    = mag_limit
+        self.peak_window  = peak_window
+        self.n_near_peak  = n_near_peak
+        self.decline_limit = decline_limit
+        self.obs_records  = {}
+
+    def run(self, dataSlice, slice_point=None):
+        snr, filters, times, obs_record = evaluate_slsn(
+            self, dataSlice, slice_point, return_full_obs=True
+        )
+
+        spec_triggered      = False
+        near_peak_pass      = False
+        multifilter_pass    = False
+        brightness_pass     = False
+        slow_evolution_pass = False
+
         if obs_record is None or snr.size == 0:
             if self.store_obs_mode == "full":
                 self.obs_records[slice_point['sid']] = {
                     'spec_trigger': False,
-                    'min_mag_near_peak': np.nan,
-                    'has_g_near_peak': False,
-                    'has_r_near_peak': False,
                     'sid': int(slice_point['sid']),
                     'z': float(slice_point['z']),
                     'peak_time': float(slice_point['peak_time']),
-                    'peak_mjd': self.mjd0 + float(slice_point['peak_time']),
-                    'mjd_obs': [],
-                    'mag_obs': [],
-                    'snr_obs': [],
-                    'filter': []
                 }
             return 0.0
-        
-        mags = np.asarray(obs_record['mag_obs'], float)
+
+        mags    = np.asarray(obs_record['mag_obs'], float)
         mjd_obs = np.asarray(obs_record['mjd_obs'], float)
-        
-        # Must pass detection
+
+        # Must pass detection first (Firth+2015)
         detected = detect_slsn(filters, snr, mjd_obs, mags, obs_record)
-        
+
         if detected:
             peak_mjd = self.mjd0 + float(slice_point['peak_time'])
-            near_peak = (snr >= 5) & (np.abs(mjd_obs - peak_mjd) <= 5.0)
-            
-            if np.any(near_peak):
-                min_mag_near_peak = float(np.min(mags[near_peak]))
-                
-                # Check brightness requirement
-                if min_mag_near_peak <= 21.0:
-                    # Check color (optional)
-                    has_g_near_peak = np.any(near_peak & (filters == 'g'))
-                    has_r_near_peak = np.any(near_peak & (filters == 'r'))
-                    
-                    passes_color = True
-                    if has_g_near_peak and has_r_near_peak:
-                        g_mag = np.min(mags[near_peak & (filters == 'g')])
-                        r_mag = np.min(mags[near_peak & (filters == 'r')])
-                        passes_color = (g_mag - r_mag) <= 0.3
-                    
-                    spec_triggered = passes_color
-        
-        # ALWAYS store the record (pass or fail)
-        if self.store_obs_mode == "full":
+            good     = snr >= 5
+            near     = good & (np.abs(mjd_obs - peak_mjd) <= self.peak_window)
+
+            # --- Criterion 1: >=n_near_peak detections within ±peak_window ---
+            near_peak_pass = int(np.sum(near)) >= self.n_near_peak
+
+            # --- Criterion 2: >=2 filters near peak ---
+            if np.any(near):
+                n_filters_near = len(np.unique(filters[near]))
+                multifilter_pass = n_filters_near >= 2
+
+            # --- Criterion 3: Brightness ---
+            # Use apparent mag from slice_point if available (injected),
+            # fall back to observed peak near window
+            inj_col = 'peak_app_mag_ebv_r'
+            if inj_col in slice_point:
+                peak_mag = float(slice_point[inj_col])
+            elif np.any(near):
+                peak_mag = float(np.nanmin(mags[near]))
+            else:
+                peak_mag = np.nan
+
+            if np.isfinite(peak_mag):
+                brightness_pass = peak_mag <= self.mag_limit
+
+            # --- Criterion 4: Slow evolution near peak ---
+            # Any 30-day window near peak with Δmag < decline_limit
+            window = good & (np.abs(mjd_obs - peak_mjd) <= 45.0)
+            if np.sum(window) >= 2:
+                t_w = mjd_obs[window]
+                m_w = mags[window]
+                order = np.argsort(t_w)
+                t_w = t_w[order]
+                m_w = m_w[order]
+                for j in range(len(t_w) - 1):
+                    if (t_w[j+1] - t_w[j]) <= 35.0:
+                        dm = abs(m_w[j+1] - m_w[j])
+                        if dm < self.decline_limit:
+                            slow_evolution_pass = True
+                            break
+
+            spec_triggered = (near_peak_pass and multifilter_pass
+                              and brightness_pass and slow_evolution_pass)
+
+        if self.store_obs_mode in ("full", "meta"):
             obs_record.update({
-                'spec_trigger': spec_triggered,
-                'min_mag_near_peak': min_mag_near_peak,
-                'has_g_near_peak': has_g_near_peak,
-                'has_r_near_peak': has_r_near_peak,
-                'sid': int(slice_point['sid']),
-                'z': float(slice_point['z']),
-                'ra': float(slice_point['ra']),
-                'dec': float(slice_point['dec']),
+                'spec_trigger':       spec_triggered,
+                'near_peak_pass':     near_peak_pass,
+                'multifilter_pass':   multifilter_pass,
+                'brightness_pass':    brightness_pass,
+                'slow_evolution_pass': slow_evolution_pass,
+                'sid':  int(slice_point['sid']),
+                'z':    float(slice_point['z']),
+                'ra':   float(slice_point['ra']),
+                'dec':  float(slice_point['dec']),
                 'distance_Mpc': float(slice_point['distance']),
-                'ebv': float(slice_point['ebv']),
+                'ebv':  float(slice_point['ebv']),
                 'peak_time': float(slice_point['peak_time']),
             })
             self.obs_records[slice_point['sid']] = obs_record
-        
+
         return 1.0 if spec_triggered else 0.0
-    
+
 
 # Alias for backward compatibility
 Detect_Metric = SLSN_Detect_Metric

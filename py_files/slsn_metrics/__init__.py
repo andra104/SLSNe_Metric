@@ -125,6 +125,7 @@ from .metrics import (
     SLSN_Base_Metric,
     SLSN_Detect_Metric,
     SLSN_CharacterizeMetric,
+    SLSN_VillarMetric,
     SLSN_SpecTriggerMetric,
     Detect_Metric,  # alias
     detect_slsn,
@@ -162,7 +163,6 @@ from .diagnostics import (
     assess_literature_coverage,
     find_missing_archetypes,
     plot_population_diagnostics,
-    plot_detect_diagnostics,
     plot_healpix_efficiency,
     plot_population_lc_at_obs,
     plot_population_lc_multi_at_obs,
@@ -203,6 +203,7 @@ __all__ = [
     # Metrics
     "SLSN_Detect_Metric",
     "SLSN_CharacterizeMetric",
+    "SLSN_VillarMetric",
     "SLSN_SpecTriggerMetric",
     "detect_slsn",
     "evaluate_slsn",

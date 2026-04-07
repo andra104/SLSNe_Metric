@@ -1013,47 +1013,8 @@ def plot_population_diagnostics(
 # --------------------------------
 # --------------------------------
 
-def plot_detect_diagnostics(
-    df_obs, *,
-    population_ra_rad,
-    population_dec_rad,
-    population_peak_time_days,
-    cadence,
-    filtername='r',
-    outdir=None,
-    prefix='detect',
-    panels=('mag_ra','mag_dec','year_hist','year_bar','dec_hist','z_analysis')
-):
-    """
-    Wrapper that chains granular panels. Set `panels` to control which to render.
-    """
-    if 'mag_ra' in panels:
-        plot_mag_vs_ra(df_obs, filtername=filtername, cadence=cadence,
-                       outdir=outdir, filename=f"{prefix}_{cadence}_mag_vs_ra.png")
-    if 'mag_dec' in panels:
-        plot_mag_vs_dec(df_obs, filtername=filtername, cadence=cadence,
-                        outdir=outdir, filename=f"{prefix}_{cadence}_mag_vs_dec.png")
-    if 'year_hist' in panels:
-        plot_peak_time_hist(population_peak_time_days,
-                            df_obs.loc[df_obs['detected'] == 1, 'year'],
-                            cadence=cadence, outdir=outdir,
-                            filename=f"{prefix}_{cadence}_peak_time_hist.png")
-    if 'year_bar' in panels:
-        plot_detections_per_year(df_obs, cadence=cadence, outdir=outdir,
-                                 filename=f"{prefix}_{cadence}_detections_per_year.png")
-    if 'dec_hist' in panels:
-        det_decs = (df_obs.loc[df_obs['detected'] == 1, 'dec'].values
-                    if df_obs['detected'].any() else np.array([]))
-        plot_dec_distribution(population_dec_rad, det_decs, cadence=cadence,
-                              outdir=outdir, filename=f"{prefix}_{cadence}_dec_distribution.png")
-    if 'z_analysis' in panels:
-        plot_redshift_analysis(df_obs, pop_z=df_obs['z'].values
-                               if 'z' in df_obs.columns else population_ra_rad*0,
-                               cadence=cadence, outdir=outdir,
-                               filename=f"{prefix}_{cadence}_z_analysis.png")
 
-
-def plot_healpix_efficiency(bundle_metric_values, ra_rad, dec_rad, nside=64, outpath=None, title="Detection Efficiency"):
+def plot_healpix_efficiency(bundle_metric_values, ra_rad, dec_rad, nside=64, outpath=None, title="Detection Efficiency", figsize=(7, 4)):
     """Mollweide map of detection efficiency (injected vs detected)."""
     npix = hp.nside2npix(nside)
     injected_map = np.zeros(npix)
@@ -1070,10 +1031,13 @@ def plot_healpix_efficiency(bundle_metric_values, ra_rad, dec_rad, nside=64, out
 
     eff = np.full(npix, hp.UNSEEN)
     mask = injected_map > 0
-    eff[mask] = detected_map[mask] / injected_map[mask]
+    eff[mask] = (detected_map[mask] > 0).astype(float)
 
-    hp.mollview(eff, title=title, unit='Efficiency', cmap='viridis', hold=True)
+    hp.mollview(eff, title=title, unit='Efficiency', cmap='viridis',
+                min=0, max=1, hold=False, xsize=800)
+    plt.gcf().set_size_inches(figsize)
     hp.graticule()
+    plt.show()
     if outpath:
         plt.savefig(outpath, dpi=150, bbox_inches='tight')
         plt.close()
@@ -2011,198 +1975,6 @@ def plot_population_rate_vs_redshift(population_slicer,
     plt.show()
     return fig
 
-def plot_detection_diagnostics(
-    df_obs,
-    population_slicer=None,
-    filtername="r",
-    mjd0=60980.5,
-    bins_gap=np.arange(-100, 200, 5),
-    bins_mag=np.arange(18, 32, 0.25),
-    prefer_cadence=True,
-    show_residuals=True,
-    save_dir=None,
-):
-    """
-    Post-metric diagnostic plots for SLSN detection results.
-
-    Reproduces the three key plots from shared_utils plot_population_diagnostics,
-    adapted for the SLSN pipeline's df_obs format.
-
-    Plots
-    -----
-    A) Time gap: first detectable observation minus peak time (detected vs not)
-    B) Peak apparent magnitude histogram in chosen filter (detected vs not)
-    C) Implanted vs observed peak magnitude scatter (detected vs not)
-
-    Parameters
-    ----------
-    df_obs : DataFrame
-        Output from metric run with columns: detected, peak_time, first_det_mjd,
-        mjd_obs, mag_obs, filter, per_filter_min_mag, z, distance_modulus.
-    population_slicer : UserPointsSlicer, optional
-        For fallback peak mag reconstruction.
-    filtername : str
-        Which LSST filter to use for magnitude plots. Default 'r'.
-    mjd0 : float
-        Survey start MJD.
-    bins_gap : array
-        Histogram bins for time gap plot.
-    bins_mag : array
-        Histogram bins for magnitude plot.
-    prefer_cadence : bool
-        Use cadence-aware injected peak mag if available.
-    show_residuals : bool
-        Show implanted-observed residual histogram.
-    save_dir : str or Path, optional
-        Directory to save plots.
-    """
-    import matplotlib.pyplot as _plt
-
-    df = df_obs.copy()
-    detected = df["detected"].astype(bool).values if "detected" in df.columns \
-               else np.zeros(len(df), bool)
-
-    # Helper
-    def _min_in_filter(filters, mags, f):
-        if filters is None or mags is None:
-            return np.nan
-        filters = np.asarray(filters)
-        mags    = np.asarray(mags, dtype=float)
-        mask = (filters == f) & np.isfinite(mags) & (mags < 90)
-        return float(np.min(mags[mask])) if np.any(mask) else np.nan
-
-    # ── A) Time gap ──────────────────────────────────────────────
-    # ── Compute first_det_mjd and per_filter_min_mag if missing ──
-    if "first_det_mjd" not in df.columns:
-        def _first_det(row):
-            mjds = np.asarray(row.get("mjd_obs", []), dtype=float)
-            snrs = np.asarray(row.get("snr_obs", []), dtype=float)
-            good = np.isfinite(snrs) & (snrs >= 5) & np.isfinite(mjds)
-            return float(np.min(mjds[good])) if np.any(good) else np.nan
-        df["first_det_mjd"] = df.apply(_first_det, axis=1)
-
-    if "per_filter_min_mag" not in df.columns:
-        def _per_filter(row):
-            f_arr = np.asarray(row.get("filter", []))
-            m_arr = np.asarray(row.get("mag_obs", []), dtype=float)
-            s_arr = np.asarray(row.get("snr_obs", []), dtype=float)
-            result = {}
-            for f in "ugrizy":
-                mask = (f_arr == f) & np.isfinite(m_arr) & (m_arr < 90) & np.isfinite(s_arr) & (s_arr >= 5)
-                result[f] = float(np.min(m_arr[mask])) if np.any(mask) else np.nan
-            return result
-        df["per_filter_min_mag"] = df.apply(_per_filter, axis=1)
-
-    if "peak_time" in df.columns and "first_det_mjd" in df.columns:
-        peak_mjd     = mjd0 + df["peak_time"].astype(float).values
-        first_det    = df["first_det_mjd"].astype(float).values
-        dt_first     = first_det - peak_mjd
-
-        vals_nd = dt_first[~detected & np.isfinite(dt_first)]
-        vals_d  = dt_first[ detected & np.isfinite(dt_first)]
-
-        _plt.figure(figsize=(7.5, 4.5))
-        if vals_nd.size: _plt.hist(vals_nd, bins=bins_gap, alpha=0.5, label="non-detected")
-        if vals_d.size:  _plt.hist(vals_d,  bins=bins_gap, alpha=0.8, label="detected")
-        _plt.axvline(0, ls="--", lw=1, color="k")
-        _plt.xlabel("First observation − Peak (days)")
-        _plt.ylabel("Number of events")
-        _plt.title("Time gap to first detectable observation")
-        _plt.legend()
-        _plt.grid(True, alpha=0.3)
-        _plt.tight_layout()
-        if save_dir:
-            _plt.savefig(Path(save_dir) / "diag_time_gap.png", dpi=150)
-        _plt.show()
-    else:
-        print("[diag] Missing peak_time or first_det_mjd — skipping time gap plot.")
-
-    # ── B) Peak apparent magnitude ────────────────────────────────
-    def _pull_peak_mag(row, f):
-        d = row.get("per_filter_min_mag", {})
-        if isinstance(d, dict):
-            v = d.get(f, np.nan)
-            return v if np.isfinite(v) else np.nan
-        return np.nan
-
-    m_obs_peak = np.array([_pull_peak_mag(r, filtername)
-                            for _, r in df.iterrows()], dtype=float)
-
-    if np.any(np.isfinite(m_obs_peak)):
-        vals_nd = m_obs_peak[~detected & np.isfinite(m_obs_peak)]
-        vals_d  = m_obs_peak[ detected & np.isfinite(m_obs_peak)]
-        _plt.figure(figsize=(7.5, 4.5))
-        if vals_nd.size: _plt.hist(vals_nd, bins=bins_mag, alpha=0.5, label="non-detected")
-        if vals_d.size:  _plt.hist(vals_d,  bins=bins_mag, alpha=0.8, label="detected")
-        _plt.xlabel(f"Observed peak apparent mag ({filtername})")
-        _plt.ylabel("Number of events")
-        _plt.title(f"Peak apparent magnitude — {filtername} band")
-        _plt.legend()
-        _plt.grid(True, alpha=0.3)
-        _plt.tight_layout()
-        if save_dir:
-            _plt.savefig(Path(save_dir) / f"diag_peak_mag_{filtername}.png", dpi=150)
-        _plt.show()
-    else:
-        print(f"[diag] No finite per_filter_min_mag values for {filtername}.")
-
-    # ── C) Implanted vs observed ──────────────────────────────────
-    inj_col = f"peak_app_mag_ebv_{filtername}"
-    if inj_col in df.columns:
-        m_inj = df[inj_col].astype(float).values
-    elif population_slicer is not None and inj_col in population_slicer.slice_points:
-        m_inj = np.asarray(population_slicer.slice_points[inj_col], float)
-        if len(m_inj) != len(df):
-            m_inj = np.full(len(df), np.nan)
-    else:
-        m_inj = np.full(len(df), np.nan)
-
-    good = np.isfinite(m_inj) & np.isfinite(m_obs_peak)
-    if np.any(good):
-        _plt.figure(figsize=(5.6, 5.2))
-        _plt.scatter(m_inj[~detected & good], m_obs_peak[~detected & good],
-                     s=10, alpha=0.4, label="non-detected")
-        _plt.scatter(m_inj[ detected & good], m_obs_peak[ detected & good],
-                     s=18, alpha=0.8, label="detected")
-        lo, hi = m_inj[good].min(), m_inj[good].max()
-        _plt.plot([lo, hi], [lo, hi], 'k--', lw=1, label="1:1")
-        _plt.gca().invert_xaxis()
-        _plt.gca().invert_yaxis()
-        _plt.xlabel(f"Injected peak mag ({filtername})")
-        _plt.ylabel(f"Observed peak mag ({filtername})")
-        _plt.title(f"Injected vs Observed peak — {filtername} band")
-        _plt.legend()
-        _plt.grid(True, alpha=0.3)
-        _plt.tight_layout()
-        if save_dir:
-            _plt.savefig(Path(save_dir) / f"diag_inj_vs_obs_{filtername}.png", dpi=150)
-        _plt.show()
-
-        if show_residuals:
-            res = m_obs_peak[good] - m_inj[good]
-            vals_nd = res[~detected[good]]
-            vals_d  = res[ detected[good]]
-            _plt.figure(figsize=(7.5, 4.5))
-            if vals_nd.size: _plt.hist(vals_nd, bins=np.arange(-3, 3.05, 0.1),
-                                        alpha=0.5, label="non-detected")
-            if vals_d.size:  _plt.hist(vals_d,  bins=np.arange(-3, 3.05, 0.1),
-                                        alpha=0.8, label="detected")
-            _plt.axvline(0, color='k', ls='--', lw=1)
-            _plt.xlabel("Observed − Injected (mag)")
-            _plt.ylabel("Number of events")
-            _plt.title(f"Peak mag residuals — {filtername} band")
-            _plt.legend()
-            _plt.grid(True, alpha=0.3)
-            _plt.tight_layout()
-            if save_dir:
-                _plt.savefig(Path(save_dir) / f"diag_residuals_{filtername}.png", dpi=150)
-            _plt.show()
-    else:
-        print("[diag] No finite points for injected vs observed comparison.")
-
-# =============================================================================
-# Post-metric diagnostic plots  (ported from shared_utils_legacy.py)
-# =============================================================================
 
 def plot_detection_diagnostics(
     df_obs,

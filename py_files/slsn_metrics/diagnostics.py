@@ -2544,14 +2544,16 @@ def plot_mc_rate_uncertainty_panel(
             continue
 
         R_samples     = _sample_R_ref(n_realizations, seed=seed)
-        scale_factors = R_samples / R_ref_nominal
 
+        n_injected      = len(detect_vals)
+        V_ref           = n_injected / R_ref_nominal
         base_cumulative = np.array([
             detect_vals[peak_times <= yr * 365.25].sum()
             for yr in survey_years
         ], dtype=float)
 
-        mc_mat = scale_factors[:, None] * base_cumulative[None, :]
+        efficiency_t = base_cumulative / n_injected
+        mc_mat = efficiency_t[None, :] * R_samples[:, None] * V_ref
         mc_matrices[model] = mc_mat
         medians[model]     = np.median(mc_mat, axis=0)
         lo16s[model]       = np.percentile(mc_mat, 16, axis=0)

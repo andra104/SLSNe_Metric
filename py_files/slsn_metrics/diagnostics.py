@@ -40,6 +40,8 @@ __all__ = [
     "plot_population_rate_vs_redshift",
     "plot_detection_diagnostics",
     "plot_sky_detection",
+    "plot_mc_rate_uncertainty",
+    "plot_mc_rate_uncertainty_panel",
 ]
 
 # =============================================================================
@@ -2271,4 +2273,346 @@ def plot_sky_detection(
     plt.tight_layout()
     if save_dir:
         plt.savefig(save_dir / "diag_dec_distribution.png", dpi=150)
+    plt.show()
+
+
+# =============================================================================
+# MC Rate Uncertainty
+# =============================================================================
+
+def _sample_R_ref(n_samples, R_mode=35.0, sig_hi=25.0, sig_lo=13.0, seed=None):
+    """
+    Sample R_ref from Frohmaier+2021 asymmetric errors.
+    35 +25/-13 Gpc^-3 yr^-1
+
+    Uses a split normal: positive draws use sig_hi, negative use sig_lo.
+    Clips to minimum of 1.0 to avoid unphysical negatives.
+    """
+    rng = np.random.default_rng(seed)
+    u = rng.standard_normal(n_samples)
+    samples = np.where(u >= 0,
+                       R_mode + sig_hi * u,
+                       R_mode + sig_lo * u)
+    return np.clip(samples, 1.0, None)
+
+
+def plot_mc_rate_uncertainty(
+    detect_vals,
+    peak_times,
+    N_injected_nominal,
+    R_ref_nominal=35.0,
+    n_realizations=1000,
+    survey_years=None,
+    model_label='fe_dependent',
+    cadence_label='baseline_v5.1.1_10yrs',
+    metric_label='Detections',
+    comparison_detect_vals=None,
+    comparison_peak_times=None,
+    comparison_N_injected=None,
+    comparison_label='naive',
+    comparison_R_ref=None,
+    seed=42,
+    save_dir=None,
+):
+    """
+    Monte Carlo rate uncertainty on cumulative SLSN detections vs survey length.
+
+    Parameters
+    ----------
+    detect_vals : np.ndarray, shape (N_events,)
+        Per-event 0/1 detection flags from .npy metric output.
+    peak_times : np.ndarray, shape (N_events,)
+        Per-event peak time in relative days (1-3652) from population pickle.
+    N_injected_nominal : int
+        Total number of injected events in the population.
+    R_ref_nominal : float
+        The R_ref value (Gpc^-3 yr^-1) used when generating the population.
+    n_realizations : int
+        Number of MC draws. 1000 is sufficient; runs in seconds.
+    survey_years : list of float, optional
+        Survey durations to evaluate. Defaults to [1, 2, ..., 10].
+    model_label : str
+        Label for the primary model (used in plot titles and filenames).
+    cadence_label : str
+        Cadence name (used in plot titles and filenames).
+    comparison_detect_vals : np.ndarray, optional
+        detect_vals for a second model (e.g. naive). If provided, Plot 2
+        (significance vs survey time) is also produced.
+    comparison_peak_times : np.ndarray, optional
+        peak_times for the second model.
+    comparison_N_injected : int, optional
+        N_injected for the second model.
+    comparison_label : str
+        Label for the second model.
+    comparison_R_ref : float, optional
+        R_ref used to generate the comparison population. Defaults to R_ref_nominal.
+    seed : int
+        Random seed for reproducibility.
+    save_dir : Path or str, optional
+        If provided, saves figures here.
+
+    Notes
+    -----
+    Core logic:
+      For each realization i:
+        1. Draw R_ref_i from Frohmaier+2021 split-normal distribution
+        2. scale_factor = R_ref_i / R_ref_nominal
+        3. For each survey year t:
+             N_det(t, i) = sum(detect_vals[peak_times <= t*365.25]) * scale_factor
+
+    N_detected scales linearly with R_ref because: more events injected at the
+    same efficiency yields proportionally more detections. No new MAF runs needed.
+
+    Outputs
+    -------
+    Plot 1 : N(SLSNe) vs survey length with 68% MC uncertainty band.
+    Plot 2 : Significance vs survey time (only if comparison model provided).
+             significance(t) = |N_fe - N_naive| / sqrt(sigma_fe^2 + sigma_naive^2)
+             Horizontal lines at 3-sigma and 5-sigma answer Adam's question directly.
+    """
+    if survey_years is None:
+        survey_years = list(range(1, 11))
+    survey_years = np.asarray(survey_years, dtype=float)
+
+    # --- Draw R_ref samples and compute scale factors ---
+    R_samples    = _sample_R_ref(n_realizations, seed=seed)
+    scale_factors = R_samples / R_ref_nominal   # shape: (n_realizations,)
+
+    # --- Cumulative detections at each survey year (nominal) ---
+    # peak_times is in relative days; t years = t*365.25 days
+    base_cumulative = np.array([
+        detect_vals[peak_times <= yr * 365.25].sum()
+        for yr in survey_years
+    ], dtype=float)   # shape: (n_years,)
+
+    # --- Scale across all realizations ---
+    # mc_matrix shape: (n_realizations, n_years)
+    mc_matrix = scale_factors[:, None] * base_cumulative[None, :]
+
+    med   = np.median(mc_matrix, axis=0)
+    lo_16 = np.percentile(mc_matrix, 16, axis=0)
+    hi_84 = np.percentile(mc_matrix, 84, axis=0)
+
+    # --- Plot 1: N(SLSNe) vs survey year ---
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.fill_between(survey_years, lo_16, hi_84, alpha=0.25,
+                    label=f'{model_label} 68% CI')
+    ax.plot(survey_years, med, lw=2, label=f'{model_label} median')
+
+    if comparison_detect_vals is not None:
+        comp_R = comparison_R_ref if comparison_R_ref is not None else R_ref_nominal
+        comp_base = np.array([
+            comparison_detect_vals[comparison_peak_times <= yr * 365.25].sum()
+            for yr in survey_years
+        ], dtype=float)
+        comp_scale  = _sample_R_ref(n_realizations, seed=seed + 1) / comp_R
+        comp_matrix = comp_scale[:, None] * comp_base[None, :]
+        comp_med    = np.median(comp_matrix, axis=0)
+        comp_lo     = np.percentile(comp_matrix, 16, axis=0)
+        comp_hi     = np.percentile(comp_matrix, 84, axis=0)
+        ax.fill_between(survey_years, comp_lo, comp_hi, alpha=0.20,
+                        color='orange', label=f'{comparison_label} 68% CI')
+        ax.plot(survey_years, comp_med, lw=2, color='orange',
+                label=f'{comparison_label} median')
+
+    ax.set_xlabel('Survey Duration [years]')
+    ax.set_ylabel(f'Cumulative SLSN {metric_label}')
+    ax.set_title(f'MC Rate Uncertainty ({metric_label}): {model_label} | {cadence_label}\n'
+                 f'R_ref sampled from Frohmaier+2021: 35 +25/-13 Gpc⁻³ yr⁻¹  '
+                 f'(n={n_realizations} realizations)')
+    ax.legend()
+    ax.grid(True)
+    plt.tight_layout()
+    if save_dir:
+        plt.savefig(Path(save_dir) / f'mc_rate_N_vs_year_{model_label}_{cadence_label}.png',
+                    dpi=150)
+    plt.show()
+
+    # --- Plot 2: Significance vs survey year (only if comparison provided) ---
+    if comparison_detect_vals is not None:
+        sigma_fe   = mc_matrix.std(axis=0)
+        sigma_comp = comp_matrix.std(axis=0)
+        denom      = np.sqrt(sigma_fe**2 + sigma_comp**2)
+        denom      = np.where(denom == 0, np.nan, denom)
+        significance = np.abs(med - comp_med) / denom
+
+        fig2, ax2 = plt.subplots(figsize=(9, 4))
+        ax2.plot(survey_years, significance, lw=2, color='purple',
+                 label=f'{model_label} vs {comparison_label}')
+        ax2.axhline(3.0, ls='--', color='red',     label='3σ threshold')
+        ax2.axhline(5.0, ls=':',  color='darkred', label='5σ threshold')
+        ax2.set_xlabel('Survey Duration [years]')
+        ax2.set_ylabel('Significance (σ)')
+        ax2.set_title(f'Model Separation ({metric_label}): {model_label} vs {comparison_label} | {cadence_label}')
+        ax2.legend()
+        ax2.grid(True)
+        plt.tight_layout()
+        if save_dir:
+            plt.savefig(
+                Path(save_dir) / f'mc_significance_{model_label}_vs_{comparison_label}_{cadence_label}.png',
+                dpi=150)
+        plt.show()
+
+
+def plot_mc_rate_uncertainty_panel(
+    pop_data,
+    cadence,
+    metric_key='detect',
+    metric_label='Detections',
+    R_ref_nominal=35.0,
+    n_realizations=1000,
+    survey_years=None,
+    seed=42,
+    save_dir=None,
+):
+    """
+    One figure per cadence showing all 3 rate models + 3 significance curves.
+
+    Layout (2 panels, stacked vertically):
+      Top    : N(SLSNe) vs survey year — fe_dependent, o_dependent, naive
+               each with 68% MC uncertainty band
+      Bottom : Significance vs survey year — 3 curves:
+               fe vs naive, o vs naive, fe vs o
+               with 3-sigma and 5-sigma threshold lines
+
+    Parameters
+    ----------
+    pop_data : dict
+        Keyed by model name. Each entry must have:
+          'detect' / 'characterize' / 'spectrigger' : dict keyed by cadence -> np.ndarray
+          'peak_time' : np.ndarray of relative days (1-3652)
+          'z'         : np.ndarray (used for N_injected)
+    cadence : str
+        Cadence name to plot.
+    metric_key : str
+        One of 'detect', 'characterize', 'spectrigger'.
+    metric_label : str
+        Human-readable label for y-axis and title.
+    R_ref_nominal : float
+        R_ref used to generate populations (Gpc^-3 yr^-1).
+    n_realizations : int
+        Number of MC draws.
+    survey_years : list of float, optional
+        Defaults to [1, 2, ..., 10].
+    seed : int
+        Random seed for reproducibility.
+    save_dir : Path or str, optional
+        Directory to save figure.
+
+    Notes
+    -----
+    Colors and linestyles match notebook convention:
+      fe_dependent : #4C72B0, solid
+      o_dependent  : #DD8452, dashed
+      naive        : #55A868, dotted
+    Significance curves:
+      fe vs naive  : #4C72B0 (blue,   solid)
+      o  vs naive  : #DD8452 (orange, dashed)
+      fe vs o      : #9B59B6 (purple, dash-dot)
+    """
+    if survey_years is None:
+        survey_years = list(range(1, 11))
+    survey_years = np.asarray(survey_years, dtype=float)
+
+    COLORS = {
+        'fe_dependent': '#4C72B0',
+        'o_dependent':  '#DD8452',
+        'naive':        '#55A868',
+    }
+    LS = {
+        'fe_dependent': '-',
+        'o_dependent':  '--',
+        'naive':        ':',
+    }
+    MODELS = ['fe_dependent', 'o_dependent', 'naive']
+
+    # --- Compute MC matrix for each model ---
+    # mc_matrices[model] shape: (n_realizations, n_years)
+    mc_matrices = {}
+    medians     = {}
+    lo16s       = {}
+    hi84s       = {}
+    sigmas      = {}
+
+    for model in MODELS:
+        detect_vals = pop_data[model][metric_key][cadence]
+        peak_times  = pop_data[model]['peak_time']
+
+        if detect_vals is None:
+            print(f'  WARNING: {model} × {cadence} × {metric_key} is None — skipping')
+            mc_matrices[model] = None
+            continue
+
+        R_samples     = _sample_R_ref(n_realizations, seed=seed)
+        scale_factors = R_samples / R_ref_nominal
+
+        base_cumulative = np.array([
+            detect_vals[peak_times <= yr * 365.25].sum()
+            for yr in survey_years
+        ], dtype=float)
+
+        mc_mat = scale_factors[:, None] * base_cumulative[None, :]
+        mc_matrices[model] = mc_mat
+        medians[model]     = np.median(mc_mat, axis=0)
+        lo16s[model]       = np.percentile(mc_mat, 16, axis=0)
+        hi84s[model]       = np.percentile(mc_mat, 84, axis=0)
+        sigmas[model]      = mc_mat.std(axis=0)
+
+    # --- Build figure: 2 panels stacked ---
+    fig, (ax_n, ax_sig) = plt.subplots(
+        2, 1, figsize=(10, 8),
+        sharex=True,
+        gridspec_kw={'height_ratios': [3, 2], 'hspace': 0.08}
+    )
+
+    # --- Top panel: N(SLSNe) vs survey year ---
+    for model in MODELS:
+        if mc_matrices[model] is None:
+            continue
+        ax_n.fill_between(
+            survey_years, lo16s[model], hi84s[model],
+            alpha=0.20, color=COLORS[model]
+        )
+        ax_n.plot(
+            survey_years, medians[model],
+            color=COLORS[model], ls=LS[model], lw=2,
+            label=f'{model} median'
+        )
+
+    ax_n.set_ylabel(f'Cumulative SLSN {metric_label}')
+    ax_n.set_title(
+        f'MC Rate Uncertainty ({metric_label}) | {cadence}\n'
+        f'R_ref ~ Frohmaier+2021: 35 +25/−13 Gpc⁻³ yr⁻¹  (n={n_realizations})'
+    )
+    ax_n.legend(loc='upper left', fontsize=9)
+    ax_n.grid(True, alpha=0.4)
+
+    # --- Bottom panel: significance vs survey year ---
+    SIG_PAIRS = [
+        ('fe_dependent', 'naive',        '#4C72B0', '-',   'fe vs naive'),
+        ('o_dependent',  'naive',        '#DD8452', '--',  'o vs naive'),
+        ('fe_dependent', 'o_dependent',  '#9B59B6', '-.',  'fe vs o'),
+    ]
+
+    for m1, m2, color, ls, label in SIG_PAIRS:
+        if mc_matrices.get(m1) is None or mc_matrices.get(m2) is None:
+            continue
+        denom = np.sqrt(sigmas[m1]**2 + sigmas[m2]**2)
+        denom = np.where(denom == 0, np.nan, denom)
+        sig   = np.abs(medians[m1] - medians[m2]) / denom
+        ax_sig.plot(survey_years, sig, color=color, ls=ls, lw=2, label=label)
+
+    ax_sig.axhline(3.0, ls='--', color='red',     lw=1.2, label='3σ')
+    ax_sig.axhline(5.0, ls=':',  color='darkred', lw=1.2, label='5σ')
+    ax_sig.set_xlabel('Survey Duration [years]')
+    ax_sig.set_ylabel('Significance (σ)')
+    ax_sig.legend(loc='upper left', fontsize=9)
+    ax_sig.grid(True, alpha=0.4)
+    ax_sig.set_xlim(survey_years[0], survey_years[-1])
+
+    plt.tight_layout()
+    if save_dir:
+        fname = f'mc_panel_{metric_key}_{cadence}.png'
+        plt.savefig(Path(save_dir) / fname, dpi=150)
+        print(f'  Saved: {fname}')
     plt.show()

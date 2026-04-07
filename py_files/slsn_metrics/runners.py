@@ -309,10 +309,11 @@ def run_slsn_detect(
         
         results[cadence] = df_obs
         
-        # Cleanup temporary files
+        # Cleanup temporary files — close DB first to release SQLite file lock
         if clean_temp:
             if verbose:
                 print(f"[CLEANUP] Removing temp directory: {temp_dir}")
+            results_db.close()
             shutil.rmtree(temp_dir, ignore_errors=True)
     
     return results, metric
@@ -1148,6 +1149,8 @@ def _run_cadence_worker(args):
                            store_obs_mode=store_obs_mode),
         SLSN_CharacterizeMetric(lc_model=templates, mjd0=mjd0,
                                 store_obs_mode=store_obs_mode),
+        SLSN_VillarMetric(lc_model=templates, mjd0=mjd0,
+                          store_obs_mode=store_obs_mode),
         SLSN_SpecTriggerMetric(lc_model=templates, mjd0=mjd0,
                                store_obs_mode=store_obs_mode),
     ]
@@ -1207,6 +1210,23 @@ def _run_cadence_worker(args):
     except Exception:
         pass
     shutil.rmtree(temp_dir, ignore_errors=True)
+
+    # Verify all expected .npy files were written
+    expected_shorts = [_name_map[m.__class__.__name__] for m in metrics_list]
+    missing = []
+    for short in expected_shorts:
+        npy = os.path.join(output_dir, f'metric_values_{short}_{run_tag}.npy')
+        if not os.path.exists(npy):
+            missing.append(short)
+    if missing:
+        raise RuntimeError(
+            f'[{cadence}] MISSING .npy files after run: {missing}\n'
+            f'  Expected: {expected_shorts}\n'
+            f'  run_tag:  {run_tag}'
+        )
+    if verbose:
+        print(f'  [{cadence}] Verified {len(expected_shorts)} .npy files: {expected_shorts}', flush=True)
+
     return cadence, summary_rows
 
 

@@ -30,7 +30,7 @@ ACCOUNT=cough052
 MEM=128G
 TIME=24:00:00
 CPUS=4
-N_WORKERS=3
+N_WORKERS=4
 
 CADENCES="baseline_v5.1.1_10yrs four_roll_v5.0.0_10yrs noroll_v5.0.0_10yrs poor_weather_v5.0.1_10yrs"
 

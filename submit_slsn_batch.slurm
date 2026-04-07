@@ -2,13 +2,13 @@
 # =============================================================================
 # submit_slsn_batch.slurm — Submit all models x all cadences
 #
-# Structure: ONE job per model, all 3 cadences run in parallel within each job
-#   Job 1: fe_dependent x [baseline, four_roll, noroll]  — primary science
-#   Job 2: o_dependent  x [baseline, four_roll, noroll]  — completeness
-#   Job 3: naive        x [baseline, four_roll, noroll]  — reference (runs last)
+# Structure: ONE job per model, all 4 cadences run in parallel within each job
+#   Job 1: fe_dependent x [baseline, four_roll, noroll, poor_weather]  — primary science
+#   Job 2: o_dependent  x [baseline, four_roll, noroll, poor_weather]  — completeness
+#   Job 3: naive        x [baseline, four_roll, noroll, poor_weather]  — reference
 #
-# Speedup: 3 cadences run simultaneously per job (~13 hr vs ~40 hr sequential)
-# Memory:  3 workers x ~600MB population = ~1.8GB + MAF overhead → 128GB safe
+# Speedup: 4 cadences run simultaneously per job (~13 hr vs ~40 hr sequential)
+# Memory:  4 workers x ~600MB population = ~2.4GB + MAF overhead → 128GB safe
 #
 # Usage:
 #   bash submit_slsn_batch.slurm
@@ -17,6 +17,7 @@
 #   summary_{model}_{cadence}_z0.1-2.0_{YYMMDD}.csv
 #   metric_values_detect_{model}_{cadence}_z0.1-2.0_{YYMMDD}.npy
 #   metric_values_characterize_{model}_{cadence}_z0.1-2.0_{YYMMDD}.npy
+#   metric_values_villar_{model}_{cadence}_z0.1-2.0_{YYMMDD}.npy
 #   metric_values_spectrigger_{model}_{cadence}_z0.1-2.0_{YYMMDD}.npy
 # =============================================================================
 
@@ -114,11 +115,11 @@ echo "--- Priority 2: o_dependent ---"
 OD_JOB=$(submit_job "o_dependent" "")
 
 # ---------------------------------------------------------------------------
-# Priority 3: naive — runs after fe + o complete
+# Priority 3: naive — no dependencies, runs simultaneously
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- Priority 3: naive (after fe_dependent + o_dependent) ---"
-NAIVE_JOB=$(submit_job "naive" "${FE_JOB}:${OD_JOB}")
+echo "--- Priority 3: naive ---"
+NAIVE_JOB=$(submit_job "naive" "")
 
 # ---------------------------------------------------------------------------
 # Summary
@@ -128,7 +129,7 @@ echo "============================================================"
 echo "SUBMITTED"
 echo "  fe_dependent : $FE_JOB"
 echo "  o_dependent  : $OD_JOB"
-echo "  naive        : $NAIVE_JOB (depends on $FE_JOB + $OD_JOB)"
+echo "  naive        : $NAIVE_JOB"
 echo ""
 echo "Monitor:"
 echo "  squeue -u andra104"

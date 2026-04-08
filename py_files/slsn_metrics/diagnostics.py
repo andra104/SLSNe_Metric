@@ -2584,7 +2584,7 @@ def plot_mc_rate_uncertainty_panel(
     ax_n.set_ylabel(f'Cumulative SLSN {metric_label}')
     ax_n.set_title(
         f'MC Rate Uncertainty ({metric_label}) | {cadence}\n'
-        f'R_ref ~ Frohmaier+2021: 35 +25/−13 Gpc⁻³ yr⁻¹  (n={n_realizations})'
+        f'R_ref ~ Frohmaier+2021: 35 +25/−13 Gpc⁻³ yr⁻¹  (n={n_realizations}, σ=MC+Poisson)'
     )
     ax_n.legend(loc='upper left', fontsize=9)
     ax_n.grid(True, alpha=0.4)
@@ -2599,7 +2599,8 @@ def plot_mc_rate_uncertainty_panel(
     for m1, m2, color, ls, label in SIG_PAIRS:
         if mc_matrices.get(m1) is None or mc_matrices.get(m2) is None:
             continue
-        denom = np.sqrt(sigmas[m1]**2 + sigmas[m2]**2)
+        poisson_var = medians[m1] + medians[m2]
+        denom = np.sqrt(sigmas[m1]**2 + sigmas[m2]**2 + poisson_var)
         denom = np.where(denom == 0, np.nan, denom)
         sig   = np.abs(medians[m1] - medians[m2]) / denom
         ax_sig.plot(survey_years, sig, color=color, ls=ls, lw=2, label=label)

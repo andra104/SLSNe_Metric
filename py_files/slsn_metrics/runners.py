@@ -4,6 +4,7 @@ runners.py — MAF execution wrappers for SLSN metrics.
 Clean runners without GRB-specific assumptions.
 """
 import os
+import shutil
 import numpy as np
 import pandas as pd
 import healpy as hp
@@ -164,7 +165,6 @@ def run_slsn_detect(
     import rubin_sim.maf as maf
     from rubin_sim.maf import metric_bundles, db
     import os
-    import shutil
     from collections import OrderedDict
 
     # Resolve paths via paths.py if not provided — works on any machine
@@ -182,9 +182,12 @@ def run_slsn_detect(
             print(f"Running cadence: {cadence}")
             print(f"{'='*60}")
         
-        # Setup temporary directory
+        # Always start with a clean temp dir — stale .npz files from a
+        # previously cancelled job cause MAF FileNotFoundError on restart.
         temp_dir = os.path.join(output_dir, f"Metric_temp_{cadence}")
-        os.makedirs(temp_dir, exist_ok=True)
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+        os.makedirs(temp_dir)
         
         # Database and results setup
         opsdb = os.path.join(db_dir, f"{cadence}.db")
@@ -1000,8 +1003,12 @@ def run_slsn_multi_metrics(
             print(f"{'='*60}")
         
         opsdb = os.path.join(db_dir, f"{cadence}.db")
+        # Always start with a clean temp dir — stale .npz files from a
+        # previously cancelled job cause MAF FileNotFoundError on restart.
         temp_dir = os.path.join(output_dir, f"_temp_{cadence}")
-        os.makedirs(temp_dir, exist_ok=True)
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+        os.makedirs(temp_dir)
         resultsDb = db.ResultsDb(out_dir=temp_dir)
         
         # Build all metric bundles at once — one MAF pass for all metrics
@@ -1089,7 +1096,6 @@ def run_slsn_multi_metrics(
             resultsDb.close()
         except Exception:
             pass
-        import shutil
         shutil.rmtree(temp_dir, ignore_errors=True)
 
     # Final summary save (same file, now complete with all cadences)
@@ -1172,7 +1178,6 @@ def _run_cadence_worker(args):
     from datetime import datetime
     import rubin_sim.maf.db as mafdb
     from rubin_sim.maf.metric_bundles import MetricBundle, MetricBundleGroup
-    import shutil
     from .metrics import SLSN_Detect_Metric, SLSN_CharacterizeMetric, SLSN_VillarMetric, SLSN_ELAsTiCC_Metric, SLSN_SpecTriggerMetric
 
     n_events = len(population.slice_points['distance'])
@@ -1218,8 +1223,12 @@ def _run_cadence_worker(args):
         metrics_list = _all_metrics
 
     opsdb    = os.path.join(db_dir, f"{cadence}.db")
+    # Always start with a clean temp dir — stale .npz files from a
+    # previously cancelled job cause MAF FileNotFoundError on restart.
     temp_dir = os.path.join(output_dir, f"_temp_{cadence}")
-    os.makedirs(temp_dir, exist_ok=True)
+    if os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir)
+    os.makedirs(temp_dir)
     results_db = mafdb.ResultsDb(out_dir=temp_dir)
 
     _name_map = {

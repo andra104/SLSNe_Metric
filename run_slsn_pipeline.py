@@ -315,4 +315,15 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    import traceback
+    try:
+        main()
+    except SystemExit:
+        raise   # let argparse / sys.exit() pass through normally
+    except Exception as exc:
+        # Flush a timestamped error so it's never buried in SLURM output.
+        # Re-raise so the full traceback also appears, then exit non-zero.
+        _log(f"FATAL ERROR: {type(exc).__name__}: {exc}")
+        traceback.print_exc(file=sys.stdout)
+        sys.stdout.flush()
+        sys.exit(1)

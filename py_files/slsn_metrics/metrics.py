@@ -723,7 +723,7 @@ class SLSN_SpecTriggerMetric(SLSN_Base_Metric):
       2. >=2 filters detected near peak
          (color information to distinguish from contaminants)
       3. Peak apparent magnitude brighter than mag_limit
-         (spectrograph feasibility — 23.5 is educated guess for 4-8m ToO;
+         (spectrograph feasibility — 23.0 is educated guess for 4-8m ToO;
           pending confirmation from instrumentation team)
       4. Slow evolution: Δmag < decline_limit over any 30-day window
          near peak (distinguishes SLSNe from faster transients)
@@ -732,7 +732,7 @@ class SLSN_SpecTriggerMetric(SLSN_Base_Metric):
     ----------
     mag_limit : float
         Faintest apparent magnitude for spectroscopic follow-up.
-        Default 23.5 — educated estimate for 4-8m class telescope ToO.
+        Default 23.0 — educated estimate for 4-8m class telescope ToO.
         ⚠ Pending confirmation from instrumentation collaborators.
     peak_window : float
         Days around peak to require detections. Default 20.0.

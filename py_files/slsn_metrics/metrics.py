@@ -750,7 +750,7 @@ class SLSN_SpecTriggerMetric(SLSN_Base_Metric):
     Villar+2018  : peak magnitude distribution 19-23 mag in WFD
     """
 
-    def __init__(self, mag_limit=23.5, peak_window=20.0,
+    def __init__(self, mag_limit=23.0, peak_window=20.0,
                  n_near_peak=2, decline_limit=1.0, **kwargs):
         super().__init__(**kwargs)
         self.metricName = 'SLSN_SpecTrigger'

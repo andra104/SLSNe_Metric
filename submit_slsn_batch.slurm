@@ -19,6 +19,7 @@
 #   metric_values_characterize_{model}_{cadence}_z0.1-2.0_{YYMMDD}.npy
 #   metric_values_villar_{model}_{cadence}_z0.1-2.0_{YYMMDD}.npy
 #   metric_values_spectrigger_{model}_{cadence}_z0.1-2.0_{YYMMDD}.npy
+#   metric_values_elasticc_{model}_{cadence}_z0.1-2.0_{YYMMDD}.npy
 # =============================================================================
 
 REPO=/users/1/andra104/Documents/Research/Transient_Metrics/SLSNe_Metric
@@ -35,6 +36,48 @@ N_WORKERS=4
 CADENCES="baseline_v5.1.1_10yrs four_roll_v5.0.0_10yrs noroll_v5.0.0_10yrs poor_weather_v5.0.1_10yrs"
 
 mkdir -p $REPO/output/SLSNe/logs
+
+# ---------------------------------------------------------------------------
+# Pre-flight check: verify metrics in runners.py _name_map match instantiated
+# Catches mismatches before burning compute hours on misnamed/missing .npy files
+# ---------------------------------------------------------------------------
+echo "============================================================"
+echo "PRE-FLIGHT METRIC ALIGNMENT CHECK"
+echo "============================================================"
+
+python3 - << 'PYCHECK'
+import re, sys
+txt = open('py_files/slsn_metrics/runners.py').read()
+name_map_hits  = re.findall(r"'(SLSN_[^']+)'\s*:\s*'([^']+)'", txt)
+name_map       = dict(name_map_hits)
+mapped_classes = set(name_map.keys())
+mapped_shorts  = set(name_map.values())
+instantiated   = set(re.findall(r'(SLSN_\w+Metric)\(lc_model=', txt))
+print(f"  Metrics instantiated in runners.py : {sorted(instantiated)}")
+print(f"  Metrics in _name_map               : {sorted(mapped_classes)}")
+print(f"  Output .npy short names            : {sorted(mapped_shorts)}")
+missing_from_map  = instantiated - mapped_classes
+missing_from_list = mapped_classes - instantiated
+ok = True
+if missing_from_map:
+    print(f"  WARNING: instantiated but not in _name_map: {missing_from_map}")
+    ok = False
+if missing_from_list:
+    print(f"  WARNING: in _name_map but not instantiated: {missing_from_list}")
+    ok = False
+if ok:
+    print(f"  STATUS: OK - all {len(instantiated)} metrics aligned")
+else:
+    print(f"  STATUS: FAILED - fix runners.py before submitting")
+    sys.exit(1)
+PYCHECK
+
+if [ $? -ne 0 ]; then
+    echo "Pre-flight check failed. Aborting submission."
+    exit 1
+fi
+echo "============================================================"
+
 
 echo "============================================================"
 echo "SLSN BATCH LAUNCHER"

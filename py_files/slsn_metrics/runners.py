@@ -15,7 +15,7 @@ import rubin_sim.maf.db as db
 import astropy.units as u
 from astropy.cosmology import Planck18 as cosmo
 from rubin_sim.maf.metric_bundles import MetricBundle, MetricBundleGroup
-from .metrics import SLSN_Detect_Metric, SLSN_CharacterizeMetric, SLSN_VillarMetric, SLSN_SpecTriggerMetric
+from .metrics import SLSN_Detect_Metric, SLSN_CharacterizeMetric, SLSN_VillarMetric, SLSN_ELAsTiCC_Metric, SLSN_SpecTriggerMetric
 from .diagnostics import plot_healpix_efficiency
 from .paths import (
     get_repo_root,

@@ -245,6 +245,7 @@ def main():
                     sub_pop.slice_points[key] = sp[key]
             except Exception:
                 sub_pop.slice_points[key] = sp[key]
+        sub_pop.slice_points['sid'] = np.arange(args.max_events)
         population = sub_pop
         print(f"  Subsample ready: {args.max_events:,} events")
 

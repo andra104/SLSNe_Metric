@@ -106,6 +106,12 @@ def parse_args():
                    help="Cap population at this many events after generation. "
                         "Use with --store-obs-mode full for diagnostic runs (e.g. 50000). "
                         "Default: None (use full population).")
+    p.add_argument('--only-metrics', nargs='+', default=None,
+                   metavar='METRIC',
+                   choices=['detect', 'characterize', 'villar', 'elasticc', 'spectrigger'],
+                   help="Run only the listed metrics instead of all five. "
+                        "e.g. --only-metrics spectrigger  "
+                        "Valid: detect characterize villar elasticc spectrigger")
     p.add_argument('--dry-run', action='store_true',
                    help="Print resolved paths and parameters, then exit.")
 
@@ -157,6 +163,7 @@ def main():
         print(f"  gal lat cut    : {args.gal_lat_cut} deg")
         print(f"  seed           : {args.seed}")
         print(f"  regen pop      : {args.regen_population}")
+        print(f"  only-metrics   : {args.only_metrics if args.only_metrics else 'all (detect, characterize, villar, elasticc, spectrigger)'}")
         print("=========================================\n")
         return
 
@@ -249,6 +256,19 @@ def main():
     t0_step = datetime.now()
     print(f"{'='*60}")
 
+    if args.only_metrics:
+        _all_valid = ['detect', 'characterize', 'villar', 'elasticc', 'spectrigger']
+        _skipped = [m for m in _all_valid if m not in args.only_metrics]
+        print(f"""
+============================================================
+  WARNING — PARTIAL METRIC RUN (--only-metrics active)
+  Running : {sorted(args.only_metrics)}
+  Skipped : {_skipped}
+  Only these .npy files will be written/updated.
+  All other existing .npy files are untouched.
+============================================================
+""", flush=True)
+
     from slsn_metrics.runners import run_slsn_multi_metrics_parallel
     if args.n_workers > 1 and len(args.cadences) > 1:
         _log(f"  Using {args.n_workers} parallel workers for "
@@ -265,7 +285,8 @@ def main():
             store_obs_mode=args.store_obs_mode,
             model_name=args.model,
             z_min=args.z_min,
-            z_max=args.z_max
+            z_max=args.z_max,
+            only_metrics=args.only_metrics,
         )
     else:
         summary = run_slsn_multi_metrics(
@@ -280,7 +301,8 @@ def main():
             store_obs_mode=args.store_obs_mode,
             model_name=args.model,
             z_min=args.z_min,
-            z_max=args.z_max
+            z_max=args.z_max,
+            only_metrics=args.only_metrics,
         )
 
     print(f"\n{'='*60}")

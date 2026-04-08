@@ -901,11 +901,12 @@ def run_slsn_multi_metrics(
     store_obs_mode='none',
     model_name=None,
     z_min=0.1,
-    z_max=2.0
+    z_max=2.0,
+    only_metrics=None,
 ):
     """
     Run multiple SLSN metrics on cadences and summarize results.
-    
+
     Parameters
     ----------
     templates : LC
@@ -919,7 +920,11 @@ def run_slsn_multi_metrics(
     output_dir : str or Path
         Output directory
     metrics_list : list of Metric instances, optional
-        If None, runs [Detect, Characterize, SpecTrigger]
+        If provided, use this list directly (ignores only_metrics).
+    only_metrics : list of str or None
+        If set, run only the named metrics (e.g. ['spectrigger']).
+        Valid names: detect, characterize, villar, elasticc, spectrigger.
+        None (default) runs all five. Ignored if metrics_list is provided.
     mjd0 : float
         Survey start MJD
     ignore_triples : bool
@@ -930,7 +935,7 @@ def run_slsn_multi_metrics(
         Generate HEALPix efficiency maps
     verbose : bool
         Print progress
-    
+
     Returns
     -------
     summary_df : DataFrame
@@ -942,8 +947,16 @@ def run_slsn_multi_metrics(
     if output_dir is None:
         output_dir = str(get_output_dir("SLSNe"))
 
+    _short_map = {
+        'SLSN_Detect_Metric':      'detect',
+        'SLSN_CharacterizeMetric': 'characterize',
+        'SLSN_VillarMetric':       'villar',
+        'SLSN_ELAsTiCC_Metric':    'elasticc',
+        'SLSN_SpecTriggerMetric':  'spectrigger',
+    }
+
     if metrics_list is None:
-        metrics_list = [
+        _all = [
             SLSN_Detect_Metric(lc_model=templates, mjd0=mjd0,
                                store_obs_mode=store_obs_mode),
             SLSN_CharacterizeMetric(lc_model=templates, mjd0=mjd0,
@@ -955,6 +968,24 @@ def run_slsn_multi_metrics(
             SLSN_SpecTriggerMetric(lc_model=templates, mjd0=mjd0,
                                    store_obs_mode=store_obs_mode)
         ]
+        if only_metrics:
+            metrics_list = [m for m in _all
+                            if _short_map[m.__class__.__name__] in only_metrics]
+            if not metrics_list:
+                raise ValueError(f'--only-metrics {only_metrics!r} matched no known metrics. '
+                                 f'Valid names: {list(_short_map.values())}')
+            skipped = [s for s in _short_map.values() if s not in only_metrics]
+            print(f"""
+============================================================
+  WARNING — PARTIAL METRIC RUN (--only-metrics active)
+  Running : {sorted(only_metrics)}
+  Skipped : {skipped}
+  Only these .npy files will be written/updated.
+  All other existing .npy files are untouched.
+============================================================
+""", flush=True)
+        else:
+            metrics_list = _all
     
     os.makedirs(output_dir, exist_ok=True)
     n_events = len(population.slice_points['distance'])
@@ -1124,7 +1155,7 @@ def _run_cadence_worker(args):
     args : tuple
         (cadence, templates, population, db_dir, output_dir,
          mjd0, ignore_triples, store_obs_mode,
-         model_name, z_min, z_max, verbose)
+         model_name, z_min, z_max, verbose, only_metrics)
 
     Returns
     -------
@@ -1133,7 +1164,7 @@ def _run_cadence_worker(args):
     """
     (cadence, templates, population, db_dir, output_dir,
      mjd0, ignore_triples, store_obs_mode,
-     model_name, z_min, z_max, verbose) = args
+     model_name, z_min, z_max, verbose, only_metrics) = args
 
     import os
     import numpy as np
@@ -1147,7 +1178,7 @@ def _run_cadence_worker(args):
     n_events = len(population.slice_points['distance'])
     note     = "scheduler_note not like 'long%'" if ignore_triples else ""
 
-    metrics_list = [
+    _all_metrics = [
         SLSN_Detect_Metric(lc_model=templates, mjd0=mjd0,
                            store_obs_mode=store_obs_mode),
         SLSN_CharacterizeMetric(lc_model=templates, mjd0=mjd0,
@@ -1159,24 +1190,37 @@ def _run_cadence_worker(args):
         SLSN_SpecTriggerMetric(lc_model=templates, mjd0=mjd0,
                                store_obs_mode=store_obs_mode),
     ]
+    _short_map = {
+        'SLSN_Detect_Metric':      'detect',
+        'SLSN_CharacterizeMetric': 'characterize',
+        'SLSN_VillarMetric':       'villar',
+        'SLSN_ELAsTiCC_Metric':    'elasticc',
+        'SLSN_SpecTriggerMetric':  'spectrigger',
+    }
+    if only_metrics:
+        metrics_list = [m for m in _all_metrics
+                        if _short_map[m.__class__.__name__] in only_metrics]
+        if not metrics_list:
+            raise ValueError(f'--only-metrics {only_metrics!r} matched no known metrics. '
+                             f'Valid names: {list(_short_map.values())}')
+        skipped = [s for s in _short_map.values() if s not in only_metrics]
+        print(f"""
+============================================================
+  WARNING — PARTIAL METRIC RUN (--only-metrics active)
+  Cadence : {cadence}
+  Running : {sorted(only_metrics)}
+  Skipped : {skipped}
+  Only these .npy files will be written/updated.
+  All other existing .npy files are untouched.
+============================================================
+""", flush=True)
+    else:
+        metrics_list = _all_metrics
 
     opsdb    = os.path.join(db_dir, f"{cadence}.db")
     temp_dir = os.path.join(output_dir, f"_temp_{cadence}")
     os.makedirs(temp_dir, exist_ok=True)
     results_db = mafdb.ResultsDb(out_dir=temp_dir)
-
-    bundles = {
-        m.__class__.__name__: MetricBundle(m, population, note)
-        for m in metrics_list
-    }
-    group = MetricBundleGroup(bundles, opsdb,
-                              out_dir=temp_dir, results_db=results_db)
-    group.run_all()
-
-    # Build run tag and save .npy files
-    date_tag  = datetime.now().strftime('%y%m%d')
-    model_tag = model_name if model_name else 'unknown'
-    run_tag   = f'{model_tag}_{cadence}_z{z_min}-{z_max}_{date_tag}'
 
     _name_map = {
         'SLSN_Detect_Metric':      'detect',
@@ -1186,52 +1230,67 @@ def _run_cadence_worker(args):
         'SLSN_SpecTriggerMetric':  'spectrigger',
     }
 
-    summary_rows = []
-    for mname, bundle in bundles.items():
-        short     = _name_map.get(mname, mname.replace('SLSN_', '').lower())
-        n_success = int(bundle.metric_values.sum())
-        efficiency = n_success / n_events
-        summary_rows.append({
-            'cadence': cadence, 'metric': mname,
-            'n_events': n_events, 'n_success': n_success,
-            'efficiency': efficiency
-        })
-        npy_file = os.path.join(
-            output_dir, f'metric_values_{short}_{run_tag}.npy')
-        np.save(npy_file, bundle.metric_values.filled(0).astype(np.float32))
-        if verbose:
-            print(f'  [{cadence}] {mname}: '
-                  f'{100*efficiency:.2f}% ({n_success}/{n_events})')
-            print(f'  Saved: {npy_file}', flush=True)
-
-    # Save per-cadence summary
-    summary_file = os.path.join(output_dir, f'summary_{run_tag}.csv')
-    pd.DataFrame(summary_rows).to_csv(summary_file, index=False)
-    if verbose:
-        print(f'  Summary: {summary_file}', flush=True)
-
-    # Close DB before cleanup to release file lock
     try:
-        results_db.close()
-    except Exception:
-        pass
-    shutil.rmtree(temp_dir, ignore_errors=True)
+        bundles = {
+            m.__class__.__name__: MetricBundle(m, population, note)
+            for m in metrics_list
+        }
+        group = MetricBundleGroup(bundles, opsdb,
+                                  out_dir=temp_dir, results_db=results_db)
+        group.run_all()
 
-    # Verify all expected .npy files were written
-    expected_shorts = [_name_map[m.__class__.__name__] for m in metrics_list]
-    missing = []
-    for short in expected_shorts:
-        npy = os.path.join(output_dir, f'metric_values_{short}_{run_tag}.npy')
-        if not os.path.exists(npy):
-            missing.append(short)
-    if missing:
-        raise RuntimeError(
-            f'[{cadence}] MISSING .npy files after run: {missing}\n'
-            f'  Expected: {expected_shorts}\n'
-            f'  run_tag:  {run_tag}'
-        )
-    if verbose:
-        print(f'  [{cadence}] Verified {len(expected_shorts)} .npy files: {expected_shorts}', flush=True)
+        # Build run tag and save .npy files
+        date_tag  = datetime.now().strftime('%y%m%d')
+        model_tag = model_name if model_name else 'unknown'
+        run_tag   = f'{model_tag}_{cadence}_z{z_min}-{z_max}_{date_tag}'
+
+        summary_rows = []
+        for mname, bundle in bundles.items():
+            short     = _name_map.get(mname, mname.replace('SLSN_', '').lower())
+            n_success = int(bundle.metric_values.sum())
+            efficiency = n_success / n_events
+            summary_rows.append({
+                'cadence': cadence, 'metric': mname,
+                'n_events': n_events, 'n_success': n_success,
+                'efficiency': efficiency
+            })
+            npy_file = os.path.join(
+                output_dir, f'metric_values_{short}_{run_tag}.npy')
+            np.save(npy_file, bundle.metric_values.filled(0).astype(np.float32))
+            if verbose:
+                print(f'  [{cadence}] {mname}: '
+                      f'{100*efficiency:.2f}% ({n_success}/{n_events})')
+                print(f'  Saved: {npy_file}', flush=True)
+
+        # Save per-cadence summary
+        summary_file = os.path.join(output_dir, f'summary_{run_tag}.csv')
+        pd.DataFrame(summary_rows).to_csv(summary_file, index=False)
+        if verbose:
+            print(f'  Summary: {summary_file}', flush=True)
+
+        # Verify all expected .npy files were written
+        expected_shorts = [_name_map[m.__class__.__name__] for m in metrics_list]
+        missing = []
+        for short in expected_shorts:
+            npy = os.path.join(output_dir, f'metric_values_{short}_{run_tag}.npy')
+            if not os.path.exists(npy):
+                missing.append(short)
+        if missing:
+            raise RuntimeError(
+                f'[{cadence}] MISSING .npy files after run: {missing}\n'
+                f'  Expected: {expected_shorts}\n'
+                f'  run_tag:  {run_tag}'
+            )
+        if verbose:
+            print(f'  [{cadence}] Verified {len(expected_shorts)} .npy files: {expected_shorts}', flush=True)
+
+    finally:
+        # Always clean up temp dir — even if run_all() or saving raised an exception
+        try:
+            results_db.close()
+        except Exception:
+            pass
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
     return cadence, summary_rows
 
@@ -1251,7 +1310,8 @@ def run_slsn_multi_metrics_parallel(
     store_obs_mode='none',
     model_name=None,
     z_min=0.1,
-    z_max=2.0
+    z_max=2.0,
+    only_metrics=None,
 ):
     """
     Parallel version of run_slsn_multi_metrics.
@@ -1271,6 +1331,10 @@ def run_slsn_multi_metrics_parallel(
         OpSim cadence names — each runs in its own worker process.
     n_workers : int
         Max parallel workers. Default 4.
+    only_metrics : list of str or None
+        If set, run only the named metrics (e.g. ['spectrigger']).
+        Valid names: detect, characterize, villar, elasticc, spectrigger.
+        None (default) runs all five.
     All other parameters same as run_slsn_multi_metrics.
 
     Returns
@@ -1286,7 +1350,8 @@ def run_slsn_multi_metrics_parallel(
             mjd0=mjd0, ignore_triples=ignore_triples,
             save_summary=save_summary, verbose=verbose,
             store_obs_mode=store_obs_mode, model_name=model_name,
-            z_min=z_min, z_max=z_max
+            z_min=z_min, z_max=z_max,
+            only_metrics=only_metrics,
         )
 
     if db_dir is None:
@@ -1309,7 +1374,7 @@ def run_slsn_multi_metrics_parallel(
     worker_args = [
         (cadence, templates, population, db_dir, output_dir,
          mjd0, ignore_triples, store_obs_mode,
-         model_name, z_min, z_max, verbose)
+         model_name, z_min, z_max, verbose, only_metrics)
         for cadence in cadences
     ]
 

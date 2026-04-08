@@ -26,6 +26,17 @@ from .paths import (
     get_shared_output_dir,
 )
 
+# Single source of truth: metric class name -> short filename label.
+# Used for .npy filenames, --only-metrics filtering, and post-run verification.
+# Update here when adding a new metric class — nowhere else.
+_METRIC_NAME_MAP = {
+    'SLSN_Detect_Metric':      'detect',
+    'SLSN_CharacterizeMetric': 'characterize',
+    'SLSN_VillarMetric':       'villar',
+    'SLSN_ELAsTiCC_Metric':    'elasticc',
+    'SLSN_SpecTriggerMetric':  'spectrigger',
+}
+
 
 # --------------------------------------------
 # Helper function to apply either redshift or distance (directly)
@@ -950,13 +961,7 @@ def run_slsn_multi_metrics(
     if output_dir is None:
         output_dir = str(get_output_dir("SLSNe"))
 
-    _short_map = {
-        'SLSN_Detect_Metric':      'detect',
-        'SLSN_CharacterizeMetric': 'characterize',
-        'SLSN_VillarMetric':       'villar',
-        'SLSN_ELAsTiCC_Metric':    'elasticc',
-        'SLSN_SpecTriggerMetric':  'spectrigger',
-    }
+    _short_map = _METRIC_NAME_MAP
 
     if metrics_list is None:
         _all = [
@@ -989,7 +994,20 @@ def run_slsn_multi_metrics(
 """, flush=True)
         else:
             metrics_list = _all
-    
+
+    if verbose:
+        _param_keys = ('mag_limit', 'peak_window', 'n_near_peak', 'decline_limit',
+                       'n_det_total', 'n_det_peak', 'peak_window_mag',
+                       'min_snr', 'min_sep_days',
+                       'use_extinction', 'use_kcorrect', 'store_obs_mode')
+        print('\n--- Metric configuration ---', flush=True)
+        for m in metrics_list:
+            params = {k: v for k, v in vars(m).items() if k in _param_keys}
+            if 'min_sep_days' in params:
+                params['min_sep_minutes'] = round(params['min_sep_days'] * 1440, 4)
+            print(f'  {m.__class__.__name__}: {params}', flush=True)
+        print('----------------------------\n', flush=True)
+
     os.makedirs(output_dir, exist_ok=True)
     n_events = len(population.slice_points['distance'])
     note = "scheduler_note not like 'long%'" if ignore_triples else ""
@@ -1061,15 +1079,9 @@ def run_slsn_multi_metrics(
         # Per-event 0/1 arrays. Join with population pickle for full analysis.
         # Filename encodes model, cadence, z range, and date for traceability.
         # Consistent lowercase short names for filenames
-        _name_map = {
-            'SLSN_Detect_Metric':      'detect',
-            'SLSN_CharacterizeMetric': 'characterize',
-            'SLSN_VillarMetric':       'villar',
-            'SLSN_ELAsTiCC_Metric':    'elasticc',
-            'SLSN_SpecTriggerMetric':  'spectrigger',
-        }
+        _name_map = _METRIC_NAME_MAP
         for mname, bundle in bundles.items():
-            short = _name_map.get(mname, mname.replace('SLSN_', '').lower())
+            short = _name_map[mname]
             npy_file = os.path.join(
                 output_dir,
                 f'metric_values_{short}_{run_tag}.npy'
@@ -1077,6 +1089,29 @@ def run_slsn_multi_metrics(
             np.save(npy_file, bundle.metric_values.filled(0).astype(np.float32))
             if verbose:
                 print(f'  Saved: {npy_file}')
+
+        # Verify each .npy: exists, non-zero size, correct row count
+        bad = []
+        for mname, bundle in bundles.items():
+            short = _name_map[mname]
+            npy = os.path.join(output_dir, f'metric_values_{short}_{run_tag}.npy')
+            if not os.path.exists(npy):
+                bad.append(f'{short}: missing')
+            elif os.path.getsize(npy) == 0:
+                bad.append(f'{short}: zero bytes')
+            else:
+                arr = np.load(npy, allow_pickle=False)
+                if arr.shape[0] != n_events:
+                    bad.append(f'{short}: {arr.shape[0]} rows, expected {n_events}')
+        if bad:
+            raise RuntimeError(
+                f'[{cadence}] .npy verification failed:\n'
+                + '\n'.join(f'  {b}' for b in bad)
+                + f'\n  run_tag: {run_tag}'
+            )
+        if verbose:
+            print(f'  [{cadence}] Verified {len(bundles)} .npy files '
+                  f'({n_events:,} rows each)', flush=True)
 
         # --- Incremental summary save after each cadence ---
         # Protects against job death. Cadences 1 and 2 survive if job
@@ -1195,13 +1230,7 @@ def _run_cadence_worker(args):
         SLSN_SpecTriggerMetric(lc_model=templates, mjd0=mjd0,
                                store_obs_mode=store_obs_mode),
     ]
-    _short_map = {
-        'SLSN_Detect_Metric':      'detect',
-        'SLSN_CharacterizeMetric': 'characterize',
-        'SLSN_VillarMetric':       'villar',
-        'SLSN_ELAsTiCC_Metric':    'elasticc',
-        'SLSN_SpecTriggerMetric':  'spectrigger',
-    }
+    _short_map = _METRIC_NAME_MAP
     if only_metrics:
         metrics_list = [m for m in _all_metrics
                         if _short_map[m.__class__.__name__] in only_metrics]
@@ -1222,6 +1251,19 @@ def _run_cadence_worker(args):
     else:
         metrics_list = _all_metrics
 
+    if verbose:
+        _param_keys = ('mag_limit', 'peak_window', 'n_near_peak', 'decline_limit',
+                       'n_det_total', 'n_det_peak', 'peak_window_mag',
+                       'min_snr', 'min_sep_days',
+                       'use_extinction', 'use_kcorrect', 'store_obs_mode')
+        print(f'\n[{cadence}] --- Metric configuration ---', flush=True)
+        for m in metrics_list:
+            params = {k: v for k, v in vars(m).items() if k in _param_keys}
+            if 'min_sep_days' in params:
+                params['min_sep_minutes'] = round(params['min_sep_days'] * 1440, 4)
+            print(f'  {m.__class__.__name__}: {params}', flush=True)
+        print('----------------------------\n', flush=True)
+
     opsdb    = os.path.join(db_dir, f"{cadence}.db")
     # Always start with a clean temp dir — stale .npz files from a
     # previously cancelled job cause MAF FileNotFoundError on restart.
@@ -1231,13 +1273,7 @@ def _run_cadence_worker(args):
     os.makedirs(temp_dir)
     results_db = mafdb.ResultsDb(out_dir=temp_dir)
 
-    _name_map = {
-        'SLSN_Detect_Metric':      'detect',
-        'SLSN_CharacterizeMetric': 'characterize',
-        'SLSN_VillarMetric':       'villar',
-        'SLSN_ELAsTiCC_Metric':    'elasticc',
-        'SLSN_SpecTriggerMetric':  'spectrigger',
-    }
+    _name_map = _METRIC_NAME_MAP
 
     try:
         bundles = {
@@ -1255,7 +1291,7 @@ def _run_cadence_worker(args):
 
         summary_rows = []
         for mname, bundle in bundles.items():
-            short     = _name_map.get(mname, mname.replace('SLSN_', '').lower())
+            short     = _name_map[mname]
             n_success = int(bundle.metric_values.sum())
             efficiency = n_success / n_events
             summary_rows.append({
@@ -1277,21 +1313,28 @@ def _run_cadence_worker(args):
         if verbose:
             print(f'  Summary: {summary_file}', flush=True)
 
-        # Verify all expected .npy files were written
+        # Verify each .npy: exists, non-zero size, correct row count
         expected_shorts = [_name_map[m.__class__.__name__] for m in metrics_list]
-        missing = []
+        bad = []
         for short in expected_shorts:
             npy = os.path.join(output_dir, f'metric_values_{short}_{run_tag}.npy')
             if not os.path.exists(npy):
-                missing.append(short)
-        if missing:
+                bad.append(f'{short}: missing')
+            elif os.path.getsize(npy) == 0:
+                bad.append(f'{short}: zero bytes')
+            else:
+                arr = np.load(npy, allow_pickle=False)
+                if arr.shape[0] != n_events:
+                    bad.append(f'{short}: {arr.shape[0]} rows, expected {n_events}')
+        if bad:
             raise RuntimeError(
-                f'[{cadence}] MISSING .npy files after run: {missing}\n'
-                f'  Expected: {expected_shorts}\n'
-                f'  run_tag:  {run_tag}'
+                f'[{cadence}] .npy verification failed:\n'
+                + '\n'.join(f'  {b}' for b in bad)
+                + f'\n  run_tag: {run_tag}'
             )
         if verbose:
-            print(f'  [{cadence}] Verified {len(expected_shorts)} .npy files: {expected_shorts}', flush=True)
+            print(f'  [{cadence}] Verified {len(expected_shorts)} .npy files '
+                  f'({n_events:,} rows each): {expected_shorts}', flush=True)
 
     finally:
         # Always clean up temp dir — even if run_all() or saving raised an exception
@@ -1387,35 +1430,49 @@ def run_slsn_multi_metrics_parallel(
         for cadence in cadences
     ]
 
+    from datetime import datetime
+    date_tag  = datetime.now().strftime('%y%m%d')
+    model_tag = model_name if model_name else 'unknown'
+    combined_file = os.path.join(
+        output_dir,
+        f'summary_{model_tag}_all_cadences_z{z_min}-{z_max}_{date_tag}.csv'
+    )
+
     all_rows = []
+    failed_cadences = []
+
     with ProcessPoolExecutor(max_workers=actual_workers) as executor:
         futures = {
             executor.submit(_run_cadence_worker, arg): arg[0]
             for arg in worker_args
         }
         for future in as_completed(futures):
-            cadence, rows = future.result()
-            all_rows.extend(rows)
-            if verbose:
-                n_det = next(
-                    (r['n_success'] for r in rows
-                     if r['metric'] == 'SLSN_Detect_Metric'), 0)
-                print(f"  [DONE] {cadence} — "
-                      f"{n_det:,} detections", flush=True)
+            cad = futures[future]
+            try:
+                done_cadence, rows = future.result()
+                all_rows.extend(rows)
+                if verbose:
+                    n_det = next(
+                        (r['n_success'] for r in rows
+                         if r['metric'] == 'SLSN_Detect_Metric'), 0)
+                    print(f"  [DONE] {done_cadence} — "
+                          f"{n_det:,} detections", flush=True)
+                # Write combined summary after each successful cadence so
+                # partial results are never lost if a later worker fails.
+                if save_summary and all_rows:
+                    pd.DataFrame(all_rows).to_csv(combined_file, index=False)
+            except Exception as exc:
+                failed_cadences.append(cad)
+                print(f"  [FAILED] {cad}: {type(exc).__name__}: {exc}",
+                      flush=True)
 
-    summary_df = pd.DataFrame(all_rows)
-
-    if save_summary and not summary_df.empty:
-        # One combined summary across all cadences
-        from datetime import datetime
-        date_tag = datetime.now().strftime('%y%m%d')
-        model_tag = model_name if model_name else 'unknown'
-        combined_file = os.path.join(
-            output_dir,
-            f'summary_{model_tag}_all_cadences_z{z_min}-{z_max}_{date_tag}.csv'
+    if failed_cadences:
+        raise RuntimeError(
+            f'{len(failed_cadences)} cadence(s) failed: {failed_cadences}\n'
+            f'  Successful cadence .npy files and per-cadence summary CSVs '
+            f'are intact in {output_dir}\n'
+            f'  Combined summary written for {len(all_rows)}-row subset: '
+            f'{combined_file if all_rows else "none (all failed)"}'
         )
-        summary_df.to_csv(combined_file, index=False)
-        if verbose:
-            print(f'\nCombined summary: {combined_file}')
 
-    return summary_df
+    return pd.DataFrame(all_rows)

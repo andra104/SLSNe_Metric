@@ -1070,7 +1070,7 @@ def run_slsn_multi_metrics(
         # --- Build run tag for filenames: model_cadence_zrange_YYMMDD ---
         from datetime import datetime
         import numpy as np
-        date_tag  = datetime.now().strftime('%y%m%d')
+        date_tag  = datetime.now().strftime('%y%m%d_%H%M')
         model_tag = model_name if model_name else 'unknown'
         z_tag     = f'z{z_min}-{z_max}'
         run_tag   = f'{model_tag}_{cadence}_{z_tag}_{date_tag}'
@@ -1285,7 +1285,7 @@ def _run_cadence_worker(args):
         group.run_all()
 
         # Build run tag and save .npy files
-        date_tag  = datetime.now().strftime('%y%m%d')
+        date_tag  = datetime.now().strftime('%y%m%d_%H%M')
         model_tag = model_name if model_name else 'unknown'
         run_tag   = f'{model_tag}_{cadence}_z{z_min}-{z_max}_{date_tag}'
 
@@ -1431,7 +1431,7 @@ def run_slsn_multi_metrics_parallel(
     ]
 
     from datetime import datetime
-    date_tag  = datetime.now().strftime('%y%m%d')
+    date_tag  = datetime.now().strftime('%y%m%d_%H%M')
     model_tag = model_name if model_name else 'unknown'
     combined_file = os.path.join(
         output_dir,

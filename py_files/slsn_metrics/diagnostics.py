@@ -2560,11 +2560,11 @@ def plot_mc_rate_uncertainty_panel(
         hi84s[model]       = np.percentile(mc_mat, 84, axis=0)
         sigmas[model]      = mc_mat.std(axis=0)
 
-    # --- Build figure: 2 panels stacked ---
-    fig, (ax_n, ax_sig) = plt.subplots(
-        2, 1, figsize=(10, 8),
+    # --- Build figure: 3 panels stacked ---
+    fig, (ax_n, ax_sig, ax_ratio) = plt.subplots(
+        3, 1, figsize=(10, 11),
         sharex=True,
-        gridspec_kw={'height_ratios': [3, 2], 'hspace': 0.08}
+        gridspec_kw={'height_ratios': [3, 2, 2], 'hspace': 0.25}
     )
 
     # --- Top panel: N(SLSNe) vs survey year ---
@@ -2613,9 +2613,43 @@ def plot_mc_rate_uncertainty_panel(
     ax_sig.grid(True, alpha=0.4)
     ax_sig.set_xlim(survey_years[0], survey_years[-1])
 
+    # --- Ratio panel: R_ref cancels, only Poisson uncertainty remains ---
+    # For each realization: ratio = N_m1 / N_m2 = (eff_m1 * R_ref * V_m1) / (eff_m2 * R_ref * V_m2)
+    # R_ref_i cancels exactly. Remaining uncertainty is Poisson only.
+    # Significance via delta-method on ln(ratio):
+    #   sigma_ln_ratio = sqrt(1/N_m1 + 1/N_m2)
+    #   sig = |ln(ratio)| / sigma_ln_ratio
+    RATIO_PAIRS = [
+        ('fe_dependent', 'naive',        '#4C72B0', '-',   'fe / naive'),
+        ('o_dependent',  'naive',        '#DD8452', '--',  'o / naive'),
+        ('fe_dependent', 'o_dependent',  '#9B59B6', '-.',  'fe / o'),
+    ]
+
+    for m1, m2, color, ls, label in RATIO_PAIRS:
+        if mc_matrices.get(m1) is None or mc_matrices.get(m2) is None:
+            continue
+        N1 = medians[m1]
+        N2 = medians[m2]
+        # Guard: skip time steps where either model has zero detections
+        valid = (N1 > 0) & (N2 > 0)
+        ratio      = np.where(valid, N1 / N2,       np.nan)
+        ln_ratio   = np.where(valid, np.log(ratio), np.nan)
+        sigma_frac = np.where(valid, np.sqrt(1.0/N1 + 1.0/N2), np.nan)
+        sig_ratio  = np.abs(ln_ratio) / sigma_frac
+        ax_ratio.plot(survey_years, sig_ratio, color=color, ls=ls, lw=2, label=label)
+
+    ax_ratio.axhline(3.0, ls='--', color='red',     lw=1.2, label='3σ')
+    ax_ratio.axhline(5.0, ls=':',  color='darkred', lw=1.2, label='5σ')
+    ax_ratio.set_xlabel('Survey Duration [years]')
+    ax_ratio.set_ylabel('Ratio Significance (σ)')
+    ax_ratio.set_title('Ratio significance — R_ref cancels, Poisson only')
+    ax_ratio.legend(loc='upper left', fontsize=9)
+    ax_ratio.grid(True, alpha=0.4)
+    ax_ratio.set_xlim(survey_years[0], survey_years[-1])
+
     plt.tight_layout()
     if save_dir:
-        fname = f'mc_panel_{metric_key}_{cadence}.png'
+        fname = f'mc_panel_3panel_{metric_key}_{cadence}.png'
         plt.savefig(Path(save_dir) / fname, dpi=150)
         print(f'  Saved: {fname}')
     plt.show()

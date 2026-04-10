@@ -2109,9 +2109,13 @@ def plot_detection_diagnostics(
         if inj_col in sp:
             inj_arr = np.asarray(sp[inj_col], float)
             sid_arr = np.asarray(sp["sid"])
-            sid_to_inj = dict(zip(sid_arr, inj_arr))
-            m_inj = np.array([sid_to_inj.get(int(s), np.nan)
-                               for s in df["sid"].values], dtype=float)
+            # vectorized sid lookup — replaces O(N) Python loop with O(N log N) numpy searchsorted
+            _sort_idx = np.argsort(sid_arr)
+            _sorted_sids = sid_arr[_sort_idx]
+            _pos = np.searchsorted(_sorted_sids, df["sid"].values.astype(int))
+            _pos = np.clip(_pos, 0, len(_sorted_sids) - 1)
+            _matched = _sorted_sids[_pos] == df["sid"].values.astype(int)
+            m_inj = np.where(_matched, inj_arr[_sort_idx[_pos]], np.nan).astype(float)
 
     good = np.isfinite(m_inj) & np.isfinite(m_obs_peak)
     if np.any(good):
@@ -2189,12 +2193,16 @@ def plot_sky_detection(
     mag_col = f"peak_app_mag_ebv_{filtername}"
     sp_mag  = np.asarray(sp[mag_col], float) if mag_col in sp               else np.full(len(sp_sids), np.nan)
 
-    sid_to_idx = {int(s): i for i, s in enumerate(sp_sids)}
-
-    df_sids   = df_obs["sid"].values.astype(int)
-    ras       = np.array([np.degrees(sp_ra [sid_to_idx[s]]) if s in sid_to_idx else np.nan for s in df_sids])
-    decs      = np.array([np.degrees(sp_dec[sid_to_idx[s]]) if s in sid_to_idx else np.nan for s in df_sids])
-    peak_mags = np.array([sp_mag[sid_to_idx[s]]             if s in sid_to_idx else np.nan for s in df_sids])
+    # vectorized sid lookup — replaces O(N) Python loop with O(N log N) numpy searchsorted
+    _sort_idx = np.argsort(sp_sids.astype(int))
+    _sorted_sids = sp_sids.astype(int)[_sort_idx]
+    df_sids = df_obs["sid"].values.astype(int)
+    _pos = np.searchsorted(_sorted_sids, df_sids)
+    _pos = np.clip(_pos, 0, len(_sorted_sids) - 1)
+    _matched = _sorted_sids[_pos] == df_sids
+    ras       = np.where(_matched, np.degrees(sp_ra [_sort_idx[_pos]]), np.nan)
+    decs      = np.where(_matched, np.degrees(sp_dec[_sort_idx[_pos]]), np.nan)
+    peak_mags = np.where(_matched, sp_mag[_sort_idx[_pos]], np.nan)
 
     finite = np.isfinite(ras) & np.isfinite(peak_mags)
 

@@ -10,7 +10,7 @@ SLSNe_Metric/
 │   ├── gp_build.py                 ← GP fitting, t0 selection
 │   ├── model.py                    ← LC class, templates, magnitude grid
 │   ├── population.py               ← Population generation, rate models
-│   ├── metrics.py                  ← MAF metrics (detect/characterize/trigger)
+│   ├── metrics.py                  ← MAF metrics (detect/characterize/spectrigger/villar/elasticc)
 │   ├── runners.py                  ← Execution wrappers
 │   ├── diagnostics.py              ← QA plots
 │   └── paths.py                    ← Machine-agnostic path resolution
@@ -44,8 +44,8 @@ State 4: mag_grid.pkl  (100-500x speedup)
     ↓ [run_slsn_pipeline.py --model <name>]      ← one population per model
 State 5: population_{model}.pkl  (2-7M events)
     ↓ [run_slsn_pipeline.py --cadence <name>]    ← reuse population across cadences
-State 6: metric_values_{metric}_{model}_{cadence}_{YYMMDD}.npy
-         summary_{model}_{cadence}_{YYMMDD}.csv
+State 6: metric_values_{metric}_{model}_{cadence}_{YYMMDD_HHMM}.npy
+         summary_{model}_{cadence}_{YYMMDD_HHMM}.csv
     ↓ [analysis notebook]
 State 7: Detection efficiency, N(SLSNe), redshift-binned counts
 ```
@@ -154,12 +154,14 @@ ssh acn162 'ls -la /proc/{PID}/fd'   # what files are open
 Each production run writes to `output/SLSNe/{model}/`:
 
 ```
-summary_{model}_{cadence}_z0.1-2.0_{YYMMDD}.csv
+summary_{model}_{cadence}_z0.1-2.0_{YYMMDD_HHMM}.csv
     cadence, metric, n_events, n_success, efficiency
 
-metric_values_Detect_{model}_{cadence}_z0.1-2.0_{YYMMDD}.npy
-metric_values_Characterize_{model}_{cadence}_z0.1-2.0_{YYMMDD}.npy
-metric_values_SpecTrigger_{model}_{cadence}_z0.1-2.0_{YYMMDD}.npy
+metric_values_detect_{model}_{cadence}_z0.1-2.0_{YYMMDD_HHMM}.npy
+metric_values_characterize_{model}_{cadence}_z0.1-2.0_{YYMMDD_HHMM}.npy
+metric_values_spectrigger_{model}_{cadence}_z0.1-2.0_{YYMMDD_HHMM}.npy
+metric_values_villar_{model}_{cadence}_z0.1-2.0_{YYMMDD_HHMM}.npy
+metric_values_elasticc_{model}_{cadence}_z0.1-2.0_{YYMMDD_HHMM}.npy
     Per-event 0/1 arrays (length = population size)
     Join with population pickle for per-event analysis
 ```
@@ -175,7 +177,7 @@ with open('output/SLSNe/shared/population_fe_dependent.pkl', 'rb') as f:
 z_vals = pop_data['slice_points']['z']
 
 # Load metric results
-detect = np.load('output/SLSNe/fe_dependent/metric_values_Detect_fe_dependent_baseline_v5.1.1_10yrs_z0.1-2.0_260402.npy')
+detect = np.load('output/SLSNe/fe_dependent/metric_values_detect_fe_dependent_baseline_v5.1.1_10yrs_z0.1-2.0_260402_1015.npy')
 
 # Detection efficiency in Adam's redshift bin
 mask = (z_vals >= 1.2) & (z_vals <= 1.8)
@@ -206,7 +208,7 @@ All three run in **one MAF pass** per cadence. Detection hierarchy enforced inte
 |---|---|---|
 | `SLSN_Detect` | ≥2 filters SNR≥5, rising LC, ≥15 day baseline | Firth+2015 |
 | `SLSN_Characterize` | Detect + ≥5 epochs, ≥3 filters, near/post-peak | Inserra+2024 |
-| `SLSN_SpecTrigger` | Detect + near-peak epoch, mag ≤ 21.0 | — |
+| `SLSN_SpecTrigger` | Detect + near-peak epoch, mag ≤ 23.0 | — |
 
 ---
 

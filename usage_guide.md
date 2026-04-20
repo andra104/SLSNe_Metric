@@ -45,6 +45,15 @@ index_df, _, _ = process_all_events(
     write_parquet=True, write_csv=True
 )
 
+# NOTE: The _cenwave.csv files in output/per_event_files/ were generated
+# once using this loop and committed to git as data artifacts (branch: main).
+# If running on a fresh clone or adding new events, re-run Steps 1-2 before
+# building templates. The cenwave lookup uses two reference tables at
+# output/all_events/filter_reference.csv and generic_reference.csv, originally
+# built in notebooks/all_run.ipynb (main branch only, cell 25) using
+# build_user_filter_map(). Both reference files must exist before this loop
+# will produce valid output.
+
 # Step 2: Attach cenwave (per-event)
 for name in index_df[index_df['status'] == 'ok']['event']:
     cen_map = per_filter_cenwave(supernovae_dir, name, verbose=False)

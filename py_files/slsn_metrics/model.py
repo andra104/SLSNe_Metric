@@ -546,15 +546,6 @@ class LC:
                 np.isfinite(Fnu_abs)
             )
 
-            # DEBUG: Check wavelength ranges
-            if len(sed_grid) < 3:  # Only print for first few templates
-                print(f"\n[SED DEBUG] Template '{name}' (z={z:.3f}):")
-                print(f"  Catalog Cenwave range: {lamA.min():.1f} - {lamA.max():.1f} Å")
-                print(f"  lam_rest calculated: {lam_rest.min():.1f} - {lam_rest.max():.1f} Å")
-                print(f"  lam_obs_for_eval: {lam_obs_for_eval.min():.1f} - {lam_obs_for_eval.max():.1f} Å")
-                print(f"  Expected rest-frame: ~3000-9000 Å")
-                if lam_rest.min() > 5000:
-                    print(f"   WARNING: Rest-frame wavelengths are too large!")
 
             
             sed_entry = {

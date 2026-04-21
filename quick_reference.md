@@ -246,6 +246,32 @@ constants → export_slsne_photometry
 
 ---
 
+## Hardcoded Parameters
+These values are baked into the code and affect science results. Not exposed as CLI flags.
+Check the cited file and line before changing any of these.
+
+### population.py
+| Parameter | Value | Location | Justification |
+|---|---|---|---|
+| `RATE_REF_GPC3` | 35.0 Gpc⁻³ yr⁻¹ | `population.py` module level | Frohmaier+2021 local rate at z=0.17 |
+| `Z_REF` | 0.17 | `population.py` module level | Reference redshift for Frohmaier+2021 |
+| `OH_max` | 8.3 | `generate_SLSN_PopSlicer()` default | Metallicity threshold for SLSN host galaxies |
+| `seed` | 42 | `generate_SLSN_PopSlicer()` default | Random seed — changing gives different population |
+| `gal_lat_cut` | None | `generate_SLSN_PopSlicer()` default | None = Galactic plane included; pass 15.0 to exclude |
+| CSFRD formula | Madau & Dickinson 2014 | `cosmic_sfr_density_MD14()` | Specific paper choice affects R(z) shape |
+
+### metrics.py
+| Parameter | Value | Location | Justification |
+|---|---|---|---|
+| `mag_limit` | 23.0 | `SLSN_SpecTriggerMetric.__init__` | Keck 1-hr ToO limit (confirmed by Adam Miller) |
+| `peak_window` | 20.0 days | `SLSN_SpecTriggerMetric.__init__` | Window around peak for SpecTrigger detections |
+| `n_near_peak` | 2 | `SLSN_SpecTriggerMetric.__init__` | Minimum detections required near peak |
+| `decline_limit` | 1.0 mag | `SLSN_SpecTriggerMetric.__init__` | Max brightness change over 30 days (slow-evolution cut) |
+| `SNR threshold` | 5 | `detect_slsn()` | Detection significance cut for all five metrics |
+| `mjd0` | 60980.5 | All metric `__init__` defaults | Survey start MJD (~2023-10-01); verify against actual Rubin start |
+
+---
+
 ## Key References
 
 - Frohmaier+2021 — SLSN rate anchor (35 Gpc⁻³ yr⁻¹ at z=0.17)

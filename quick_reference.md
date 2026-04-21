@@ -56,15 +56,18 @@ State 7: Detection efficiency, N(SLSNe), redshift-binned counts
 
 ## Reload Flags
 
-| Component | Regenerate when... | How |
-|---|---|---|
-| Templates | Adding events to catalog | `LC.from_catalog()` |
-| Mag grid | Templates change | `templates.build_magnitude_grid()` |
-| Population | Changing model, z range, or CSV | `--regen-population` flag |
-| Kernel | Never | — |
+| Component | Regenerate when... | How | CLI flag? |
+|---|---|---|---|
+| Templates | Adding events to catalog | `LC.from_catalog()` in notebook | No — manual notebook only |
+| Mag grid | Templates change | `templates.build_magnitude_grid()` in notebook | No — manual notebook only |
+| Population | Changing model, z range, or CSV | `--regen-population` | Yes |
+| Kernel | Never | — | — |
 
 **Never regenerate templates or mag grid between cadence runs.**
 **Always regenerate population when switching rate model.**
+**`--regen-templates` and `--regen-mag-grid` are not yet implemented.**
+**Template and mag grid rebuilds must be triggered manually in a notebook.**
+**See mosfit_interface.py docstring for the full rebuild checklist.**
 
 ---
 

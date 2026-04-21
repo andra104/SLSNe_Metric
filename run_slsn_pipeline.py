@@ -25,12 +25,17 @@ Rate models
   fe_dependent  Iron-abundance threshold — PRIMARY science result
   o_dependent   Oxygen-abundance threshold — completeness check
 
-Reload flags (when to set --regen-population)
----------------------------------------------
-  Templates  : never reloaded here (read-only)
-  Mag grid   : never reloaded here (read-only)
-  Population : set --regen-population when changing model, z range, or CSV
-  Kernel     : never touched here
+Rebuild controls
+----------------
+  Templates  : NOT handled here — rebuild manually in a notebook via LC.from_catalog()
+               --regen-templates flag does not exist yet
+  Mag grid   : NOT handled here — rebuild manually in a notebook via templates.build_magnitude_grid()
+               --regen-mag-grid flag does not exist yet
+  Population : --regen-population flag regenerates even if pickle exists
+  Kernel     : never changes — fixed Matern-3/2 in gp_build.py
+
+  See mosfit_interface.py docstring for the full rebuild checklist when
+  switching from GP to physical templates.
 """
 
 import argparse

@@ -23,11 +23,23 @@ templates = build_physical_templates(
     params_file=get_repo_root() / "SLSNe/slsne/ref_data/all_parameters.txt",
 )
 
-Reload flags (when switching from GP to physical templates)
-------------------------------------------------------------
-GENERATE_NEW_TEMPLATES  = True   <- rebuild physical templates
-GENERATE_NEW_POPULATION = True   <- rebuild population with new templates
-FORCE_REBUILD_MAG_GRID  = True   <- rebuild mag grid (new SED coverage)
+Rebuild checklist (when switching from GP to physical templates)
+---------------------------------------------------------------
+These are manual steps — none are CLI flags or executable toggles.
+Run in a notebook in this order:
+
+  1. Rebuild physical templates (replaces GP templates):
+         templates = build_physical_templates(params_file=..., save_to=Path("output/SLSNe/shared/templates.pkl"))
+
+  2. Rebuild magnitude grid (SED coverage changed):
+         templates.build_magnitude_grid(save_to=Path("output/SLSNe/shared/mag_grid.pkl"))
+
+  3. Rebuild population (new templates change mag predictions):
+         run_slsn_pipeline.py --regen-population  <- only step with a real CLI flag
+
+NOTE: --regen-templates and --regen-mag-grid CLI flags do not yet exist.
+Template and mag grid rebuilds must be triggered manually in a notebook.
+See the future end-to-end reproducibility script (Tier 3) for automation.
 """
 
 from __future__ import annotations

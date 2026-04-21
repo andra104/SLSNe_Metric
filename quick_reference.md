@@ -71,6 +71,30 @@ State 7: Detection efficiency, N(SLSNe), redshift-binned counts
 
 ---
 
+## Physical SED Cache (mosfit_interface.py)
+`build_physical_sed_grid()` runs ~128M blackbody evaluations (265 events × 161
+phases × 3000 wavelengths). This is 10–30 minutes on MSI with no cache.
+
+### Current implementation (Option B — function-level cache)
+Pass `cache_file` to skip recomputation if grids match:
+```python
+from slsn_metrics.mosfit_interface import build_physical_templates
+templates = build_physical_templates(
+    params_file=...,
+    save_to=Path("output/SLSNe/shared/physical_templates.pkl"),
+    cache_file=Path("output/SLSNe/shared/physical_sed_cache.pkl"),
+)
+```
+Cache is invalidated automatically if `phase_grid` or `wave_grid_A` change.
+
+### Future improvements (not yet implemented)
+| Option | Benefit | Complexity |
+|---|---|---|
+| Per-event cache | Partial resume if SLURM kills job mid-loop | Medium |
+| Parallelize loop | 4× speedup using ProcessPoolExecutor (4 cores on MSI) | Medium |
+
+---
+
 ## Rate Models
 
 | Model | `--model` flag | Physics | Priority |

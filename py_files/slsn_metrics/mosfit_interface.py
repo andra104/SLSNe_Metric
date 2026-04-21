@@ -199,6 +199,7 @@ def build_physical_sed_grid(
     phase_grid: "np.ndarray | None" = None,
     wave_grid_A: "np.ndarray | None" = None,
     verbose: bool = True,
+    cache_file: "Path | str | None" = None,
 ) -> "tuple[list[dict], list[str]]":
     """
     Build rest-frame SED grids for all events in all_parameters.txt
@@ -246,6 +247,23 @@ def build_physical_sed_grid(
     sed_grid = []
     names    = []
     n_failed = 0
+
+    # ── Cache load ────────────────────────────────────────────────────────
+    if cache_file is not None:
+        cache_file = Path(cache_file)
+        if cache_file.exists():
+            try:
+                import joblib
+                cached = joblib.load(cache_file)
+                if (np.allclose(cached['phase_grid'], phase_grid) and
+                        np.allclose(cached['wave_grid_A'], wave_grid_A)):
+                    log.info("[mosfit_interface] Cache hit: %s (%d events)",
+                             cache_file, len(cached['names']))
+                    return cached['sed_grid'], cached['names']
+                else:
+                    log.warning("[mosfit_interface] Cache grid mismatch — recomputing.")
+            except Exception as e:
+                log.warning("[mosfit_interface] Cache load failed (%s) — recomputing.", e)
 
     iterator = tqdm(params.iterrows(), total=len(params),
                     desc="Building physical SED grids",
@@ -329,6 +347,24 @@ def build_physical_sed_grid(
 
     log.info("[mosfit_interface] Built %d SED grids (%d failed)",
              len(sed_grid), n_failed)
+
+    # ── Cache save ────────────────────────────────────────────────────────
+    if cache_file is not None:
+        try:
+            import joblib
+            payload = {
+                'sed_grid':    sed_grid,
+                'names':       names,
+                'phase_grid':  phase_grid,
+                'wave_grid_A': wave_grid_A,
+            }
+            cache_file = Path(cache_file)
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            joblib.dump(payload, cache_file, compress=('zstd', 3))
+            log.info("[mosfit_interface] Saved SED cache → %s", cache_file)
+        except Exception as e:
+            log.warning("[mosfit_interface] Cache save failed: %s", e)
+
     return sed_grid, names
 
 
@@ -338,6 +374,7 @@ def build_physical_templates(
     phase_grid: "np.ndarray | None" = None,
     wave_grid_A: "np.ndarray | None" = None,
     verbose: bool = True,
+    cache_file: "Path | str | None" = None,
 ):
     """
     Build an LC object with physical magnetar-model SED templates.
@@ -377,6 +414,7 @@ def build_physical_templates(
         phase_grid      = phase_grid,
         wave_grid_A     = wave_grid_A,
         verbose         = verbose,
+        cache_file      = cache_file,
     )
 
     if len(sed_grid) == 0:

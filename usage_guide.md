@@ -13,6 +13,8 @@ slsn_metrics/
 ├── constants.py                   ← Physical constants, cosmology
 ├── export_slsne_photometry.py     ← Data cleaning & cenwave
 ├── gp_build.py                    ← GP fitting & t0 selection
+├── gomez_models.py                ← Vendored Gomez+2024 magnetar physics (used by mosfit_interface)
+├── mosfit_interface.py            ← Physical SED templates from MOSFiT posteriors (drop-in for LC.from_catalog)
 ├── model.py                       ← LC class & templates
 ├── population.py                  ← Population generation, rate models
 ├── metrics.py                     ← MAF metrics

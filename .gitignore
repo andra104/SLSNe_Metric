@@ -3,6 +3,7 @@ SLSNe/
 __pycache__/
 .virtual_documents/
 anaconda_projects/
+.claude
 
 # =============================================================================
 # SLSN Metrics .gitignore

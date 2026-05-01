@@ -360,7 +360,7 @@ def build_physical_sed_grid(
             }
             cache_file = Path(cache_file)
             cache_file.parent.mkdir(parents=True, exist_ok=True)
-            joblib.dump(payload, cache_file, compress=('zstd', 3))
+            joblib.dump(payload, cache_file, compress=('lzma', 3))
             log.info("[mosfit_interface] Saved SED cache → %s", cache_file)
         except Exception as e:
             log.warning("[mosfit_interface] Cache save failed: %s", e)

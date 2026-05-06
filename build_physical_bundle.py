@@ -216,7 +216,8 @@ def main():
         _log(f"  Built {len(templates.names)} events  ({elapsed/60:.1f} min)")
         _log(f"  Wavelength pts: {templates.sed_grid[0]['lam_rest_A'].shape[0]}")
         status['physical_templates.pkl'] = ('BUILT', PHYSICAL_TEMPLATES_FILE)
-
+        
+    n_templates = len(templates.names)
     _log(f"  First event : {templates.names[0]}")
     _log(f"  Last event  : {templates.names[-1]}")
 

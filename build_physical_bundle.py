@@ -110,6 +110,8 @@ def main():
 
     from slsn_metrics.model import LC
     from slsn_metrics.population import generate_SLSN_PopSlicer
+    from slsn_metrics.paths import get_log_dir
+    get_log_dir('build')   # auto-creates output/logs/build/
     _log("All imports complete — pipeline starting.")
 
     # --- dry run: print config and exit ---

@@ -119,6 +119,31 @@ def get_shared_output_dir(science_case: str = "SLSNe") -> Path:
     return d
 
 
+def get_log_dir(stage: str = "build") -> Path:
+    """
+    Path to SLURM and runtime log files.
+    Auto-creates the directory on first call.
+
+    Parameters
+    ----------
+    stage : str
+        'build'    → output/logs/build/    (templates, mag grid, bundle jobs)
+        'pipeline' → output/logs/pipeline/ (metric run jobs)
+
+    Usage
+    -----
+    from slsn_metrics.paths import get_log_dir
+    log_dir = get_log_dir('build')    # called by build_physical_bundle.py
+    log_dir = get_log_dir('pipeline') # called by run_slsn_pipeline.py
+    """
+    valid = ('build', 'pipeline')
+    if stage not in valid:
+        raise ValueError(f"stage must be one of {valid}, got {stage!r}")
+    d = get_repo_root() / "output" / "logs" / stage
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def get_rate_csv_path(filename: str = "fiducial_models.csv") -> Path:
     """
     Default path to Ben's tabulated R(z) CSV file.

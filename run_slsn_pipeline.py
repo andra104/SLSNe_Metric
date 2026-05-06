@@ -133,6 +133,8 @@ def main():
     # --- resolve repo root and add package to path ---
     repo_root = Path(__file__).resolve().parent
     sys.path.insert(0, str(repo_root / 'py_files'))
+    from slsn_metrics.paths import get_log_dir
+    get_log_dir('pipeline')   # auto-creates output/logs/pipeline/
     _log("  importing slsn_metrics (rubin_sim loads here — may take several minutes)...")
 
     from slsn_metrics.paths import (

@@ -86,6 +86,14 @@ output/Rubin_tests/SLSNe/Metric_temp*/
 !output/**/*summary*.csv
 !output/**/*.txt
 
+# SLURM and runtime logs
+logs/*.log
+logs/*.out
+logs/*.err
+output/SLSNe/logs/*.log
+output/SLSNe/logs/*.out
+output/SLSNe/logs/*.err
+
 # =============================================================================
 # RAW DATA (if present)
 # =============================================================================

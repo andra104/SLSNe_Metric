@@ -1,0 +1,4 @@
+mjd,mag,mag_err,UL,Filter,System,detected,Filter_can,Cenwave
+57802.30629,19.7956,0.1,False,i,AB,1,i,7503.03
+57804.58218,19.7556,0.1,False,i,AB,1,i,7503.03
+57814.58,19.727,0.1,False,r,AB,1,r,6155.47

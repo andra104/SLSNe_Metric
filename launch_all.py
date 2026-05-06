@@ -98,7 +98,7 @@ def main():
         cmd = [
             sys.executable, str(pipeline),
             '--model',         model,
-            '--cadence',       cadence,
+            '--cadences',      cadence,
             '--templates-pkl', args.templates_pkl,
             '--n-cores',       str(args.n_cores),
         ]

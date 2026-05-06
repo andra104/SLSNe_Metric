@@ -86,6 +86,11 @@ output/Rubin_tests/SLSNe/Metric_temp*/
 !output/**/*summary*.csv
 !output/**/*.txt
 
+# Moved to data/ — ignore if recreated in output/
+output/per_event_files/
+output/all_events/
+output/SLSNe/shared/fiducial_models*.csv
+
 # SLURM and runtime logs
 output/logs/build/*.log
 output/logs/build/*.out
@@ -93,6 +98,7 @@ output/logs/build/*.err
 output/logs/pipeline/*.log
 output/logs/pipeline/*.out
 output/logs/pipeline/*.err
+output/SLSNe/logs/
 
 # =============================================================================
 # RAW DATA (if present)
@@ -105,7 +111,7 @@ supernovae/
 
 # But keep processed per-event CSVs if small
 !data/per_event/*.csv
-!data/per_event_cenwave/*.csv
+!data/per_event/*_cenwave.csv
 
 # =============================================================================
 # ENVIRONMENT

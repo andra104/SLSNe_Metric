@@ -20,7 +20,7 @@ from slsn_metrics.mosfit_interface import build_physical_templates
 from slsn_metrics.paths import get_repo_root
 
 templates = build_physical_templates(
-    params_file=get_repo_root() / "SLSNe/slsne/ref_data/all_parameters.txt",
+    params_file=get_repo_root() / "data/slsne_catalog/all_parameters.txt",
 )
 
 Rebuild checklist (when switching from GP to physical templates)
@@ -388,7 +388,7 @@ def build_physical_templates(
     ----------
     params_file : Path or None
         Path to all_parameters.txt.
-        Default: repo_root/SLSNe/slsne/ref_data/all_parameters.txt
+        Default: repo_root/data/slsne_catalog/all_parameters.txt
     save_to : Path or None
         Save resulting LC object as .pkl (joblib format, same as GP templates).
     phase_grid : array or None
@@ -408,8 +408,7 @@ def build_physical_templates(
     repo_root = get_repo_root()
 
     if params_file is None:
-        params_file = (repo_root / "SLSNe" / "slsne" /
-                       "ref_data" / "all_parameters.txt")
+        params_file = repo_root / "data" / "slsne_catalog" / "all_parameters.txt"
 
     sed_grid, names = build_physical_sed_grid(
         params_file     = params_file,

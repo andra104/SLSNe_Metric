@@ -14,7 +14,7 @@ python run_slsn_pipeline.py \\
     --model fe_dependent \\
     --cadence baseline_v3.4 \\
     --templates-pkl output/SLSNe/shared/templates.pkl \\
-    [--rate-csv output/SLSNe/shared/fiducial_models.csv] \\
+    [--rate-csv data/rate_models/fiducial_models.csv] \\
     [--regen-population] \\
     [--n-cores 4] \\
     [--dry-run]
@@ -77,7 +77,7 @@ def parse_args():
     # Optional with defaults
     p.add_argument('--rate-csv', default=None,
                    help="Path to fiducial_models.csv. "
-                        "Defaults to output/SLSNe/shared/fiducial_models.csv")
+                        "Defaults to data/rate_models/fiducial_models.csv")
     p.add_argument('--regen-population', action='store_true',
                    help="Force regeneration of population even if pickle exists.")
     p.add_argument('--z-min', type=float, default=0.1,

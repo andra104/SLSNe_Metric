@@ -61,7 +61,7 @@ SHARED_DIR              = REPO_ROOT / 'output' / 'SLSNe' / 'shared'
 PHYSICAL_TEMPLATES_FILE = SHARED_DIR / 'physical_templates.pkl'
 PHYSICAL_MAG_GRID_FILE  = SHARED_DIR / 'physical_mag_grid.pkl'
 PHYSICAL_SED_CACHE_FILE = SHARED_DIR / 'physical_sed_cache.pkl'
-RATE_CSV                = SHARED_DIR / 'fiducial_models.csv'
+RATE_CSV                = REPO_ROOT / 'data' / 'rate_models' / 'fiducial_models.csv'
 
 # ---------------------------------------------------------------------------
 # Grid parameters

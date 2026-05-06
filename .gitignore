@@ -87,12 +87,12 @@ output/Rubin_tests/SLSNe/Metric_temp*/
 !output/**/*.txt
 
 # SLURM and runtime logs
-logs/*.log
-logs/*.out
-logs/*.err
-output/SLSNe/logs/*.log
-output/SLSNe/logs/*.out
-output/SLSNe/logs/*.err
+output/logs/build/*.log
+output/logs/build/*.out
+output/logs/build/*.err
+output/logs/pipeline/*.log
+output/logs/pipeline/*.out
+output/logs/pipeline/*.err
 
 # =============================================================================
 # RAW DATA (if present)

@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32GB
 #SBATCH --time=8:00:00
-#SBATCH --output=logs/phys_mag_grid_%j.log
+#SBATCH --output=output/logs/build/phys_mag_grid_%j.log
 
 source ~/.bashrc
 conda activate rubin_sim_2.6.1

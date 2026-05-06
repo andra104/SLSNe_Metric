@@ -35,7 +35,7 @@ N_WORKERS=4
 
 CADENCES="baseline_v5.1.1_10yrs four_roll_v5.0.0_10yrs noroll_v5.0.0_10yrs poor_weather_v5.0.1_10yrs"
 
-mkdir -p $REPO/output/SLSNe/logs
+mkdir -p $REPO/output/logs/pipeline
 
 # ---------------------------------------------------------------------------
 # Pre-flight check: verify metrics in runners.py _name_map match instantiated
@@ -96,8 +96,8 @@ submit_job() {
     local MODEL=$1
     local DEPENDENCY=$2
 
-    local LOG=$REPO/output/SLSNe/logs/${MODEL}_%j.out
-    local ERR=$REPO/output/SLSNe/logs/${MODEL}_%j.err
+    local LOG=$REPO/output/logs/pipeline/${MODEL}_%j.out
+    local ERR=$REPO/output/logs/pipeline/${MODEL}_%j.err
 
     local DEP_FLAG=""
     if [ -n "$DEPENDENCY" ]; then
@@ -176,5 +176,5 @@ echo "  naive        : $NAIVE_JOB"
 echo ""
 echo "Monitor:"
 echo "  squeue -u andra104"
-echo "  tail -f output/SLSNe/logs/fe_dependent_JOBID.out"
+echo "  tail -f output/logs/pipeline/fe_dependent_JOBID.out"
 echo "============================================================"

@@ -1,41 +1,0 @@
-============================================================
-PRE-FLIGHT CHECK — physical_templates.pkl
-============================================================
-  Checking: /users/1/andra104/Documents/Research/Transient_Metrics/SLSNe_Metric/output/SLSNe/shared/physical_templates.pkl
-  Events   : 265
-  sed_grid : present
-  STATUS: OK
-============================================================
-Node    : acn216
-Start   : Tue May 5 16:05:44 CDT 2026
-[16:05:44] Python started — beginning imports
-[16:05:44]   importing slsn_metrics (rubin_sim loads here — may take several minutes)...
-[16:06:09] All imports complete — pipeline starting.
-
-============================================================
-[16:06:09] STEP 1 — Load Physical Templates
-============================================================
-[16:06:09]   Loading from /users/1/andra104/Documents/Research/Transient_Metrics/SLSNe_Metric/output/SLSNe/shared/physical_templates.pkl
-[16:06:09]   Loaded 265 events  (0.6s)
-[16:06:09]   First event : 1991D
-[16:06:09]   Last event  : 2023wwx
-
-============================================================
-[16:06:09] STEP 2 — Physical Magnitude Grid
-============================================================
-[16:06:09]   No existing grid or checkpoint found. Building from scratch.
-[16:06:09]   Templates  : 265 events
-[16:06:09]   z grid     : [0.02, 5.00]  n=100
-[16:06:09]   phase grid : [1.0, 400.0] days  n=80
-[16:06:09]   filters    : ['u', 'g', 'r', 'i', 'z', 'y']
-[16:06:09]   Output     : /users/1/andra104/Documents/Research/Transient_Metrics/SLSNe_Metric/output/SLSNe/shared/physical_mag_grid.pkl
-[16:06:09]   NOTE: This is the slow step (~20-60 min on MSI). Checkpointing every 50 templates.
-[build_magnitude_grid] Starting...
-[build_magnitude_grid] Processing 265 templates
-[build_magnitude_grid] Using 4 parallel workers
-[build_magnitude_grid] Checkpointing every 50 templates
-[batch] Processing templates 0-49
-Batch 1:   0%|          | 0/50 [00:00<?, ?tpl/s]Batch 1:   2%|▏         | 1/50 [06:37<5:24:15, 397.05s/tpl]Batch 1:   4%|▍         | 2/50 [06:37<2:10:50, 163.56s/tpl]Batch 1:  10%|█         | 5/50 [10:51<1:20:17, 107.05s/tpl]Batch 1:  14%|█▍        | 7/50 [11:26<50:43, 70.79s/tpl]   Batch 1:  16%|█▌        | 8/50 [11:57<43:18, 61.87s/tpl]Batch 1:  18%|█▊        | 9/50 [16:11<1:14:12, 108.60s/tpl]Batch 1:  20%|██        | 10/50 [16:12<53:54, 80.87s/tpl]  Batch 1:  22%|██▏       | 11/50 [16:25<40:38, 62.53s/tpl]Batch 1:  24%|██▍       | 12/50 [17:18<37:57, 59.92s/tpl]Batch 1:  26%|██▌       | 13/50 [21:34<1:11:16, 115.59s/tpl]Batch 1:  28%|██▊       | 14/50 [21:37<49:57, 83.27s/tpl]   Batch 1:  32%|███▏      | 16/50 [22:39<33:47, 59.64s/tpl]Batch 1:  34%|███▍      | 17/50 [26:20<54:23, 98.90s/tpl]Batch 1:  36%|███▌      | 18/50 [26:55<43:53, 82.29s/tpl]Batch 1:  38%|███▊      | 19/50 [26:59<31:41, 61.35s/tpl]Batch 1:  40%|████      | 20/50 [28:01<30:42, 61.41s/tpl]Batch 1:  42%|████▏     | 21/50 [31:17<48:13, 99.77s/tpl]Batch 1:  44%|████▍     | 22/50 [32:14<40:50, 87.51s/tpl]Batch 1:  46%|████▌     | 23/50 [32:20<28:33, 63.45s/tpl]Batch 1:  48%|████▊     | 24/50 [33:22<27:20, 63.10s/tpl]Batch 1:  50%|█████     | 25/50 [36:14<39:43, 95.33s/tpl]Batch 1:  52%|█████▏    | 26/50 [37:34<36:16, 90.69s/tpl]Batch 1:  54%|█████▍    | 27/50 [37:39<25:02, 65.34s/tpl]Batch 1:  56%|█████▌    | 28/50 [38:42<23:40, 64.59s/tpl]Batch 1:  58%|█████▊    | 29/50 [41:10<31:20, 89.56s/tpl]Batch 1:  60%|██████    | 30/50 [42:52<31:05, 93.26s/tpl]Batch 1:  62%|██████▏   | 31/50 [42:59<21:22, 67.51s/tpl]Batch 1:  64%|██████▍   | 32/50 [44:02<19:48, 66.02s/tpl]Batch 1:  66%|██████▌   | 33/50 [46:06<23:39, 83.47s/tpl]Batch 1:  68%|██████▊   | 34/50 [48:11<25:36, 96.01s/tpl]Batch 1:  70%|███████   | 35/50 [48:18<17:19, 69.31s/tpl]Batch 1:  72%|███████▏  | 36/50 [49:21<15:44, 67.45s/tpl]Batch 1:  74%|███████▍  | 37/50 [51:02<16:46, 77.42s/tpl]Batch 1:  76%|███████▌  | 38/50 [53:30<19:43, 98.59s/tpl]Batch 1:  78%|███████▊  | 39/50 [53:38<13:04, 71.28s/tpl]Batch 1:  80%|████████  | 40/50 [54:42<11:33, 69.31s/tpl]Batch 1:  82%|████████▏ | 41/50 [55:58<10:40, 71.18s/tpl]Batch 1:  84%|████████▍ | 42/50 [58:49<13:28, 101.12s/tpl]Batch 1:  86%|████████▌ | 43/50 [58:57<08:33, 73.32s/tpl] Batch 1:  88%|████████▊ | 44/50 [1:00:03<07:05, 70.91s/tpl]Batch 1:  90%|█████████ | 45/50 [1:00:59<05:32, 66.43s/tpl]Batch 1:  92%|█████████▏| 46/50 [1:04:09<06:54, 103.53s/tpl]Batch 1:  94%|█████████▍| 47/50 [1:04:18<03:45, 75.11s/tpl] Batch 1:  96%|█████████▌| 48/50 [1:05:24<02:24, 72.45s/tpl]Batch 1:  98%|█████████▊| 49/50 [1:05:55<00:59, 59.97s/tpl]Batch 1: 100%|██████████| 50/50 [1:09:28<00:00, 105.88s/tpl]Batch 1: 100%|██████████| 50/50 [1:09:28<00:00, 83.36s/tpl] 
-[checkpoint] Saved at template 49/265
-[batch] Processing templates 50-99
-Batch 2:   0%|          | 0/50 [00:00<?, ?tpl/s]Batch 2:   2%|▏         | 1/50 [05:29<4:28:58, 329.35s/tpl]Batch 2:  10%|█         | 5/50 [10:01<1:20:08, 106.86s/tpl]Batch 2:  12%|█▏        | 6/50 [10:50<1:08:31, 93.44s/tpl] Batch 2:  14%|█▍        | 7/50 [10:54<50:58, 71.14s/tpl]  Batch 2:  18%|█▊        | 9/50 [14:57<1:02:55, 92.08s/tpl]Batch 2:  20%|██        | 10/50 [16:31<1:01:39, 92.48s/tpl]

@@ -36,14 +36,14 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64GB
 #SBATCH --time=12:00:00
-#SBATCH --output=logs/phys_bundle_%j.log
+#SBATCH --output=output/logs/build/phys_bundle_%j.log
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=andra104@umn.edu
 
 REPO=/users/1/andra104/Documents/Research/Transient_Metrics/SLSNe_Metric
 CONDA_BASE=/common/software/install/migrated/anaconda/miniconda3_4.8.3-jupyter
 
-mkdir -p $REPO/logs
+mkdir -p $REPO/output/logs/build
 
 # ---------------------------------------------------------------------------
 # Pre-flight check: verify physical_templates.pkl exists before any computation.

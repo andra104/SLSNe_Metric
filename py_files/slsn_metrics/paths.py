@@ -87,15 +87,15 @@ def get_output_dir(science_case: str = "SLSNe", subdir=None) -> Path:
 def get_data_dir() -> Path:
     """
     Path to per-event photometry files.
-    Location: output/per_event_files/
+    Location: data/per_event/
     """
-    return get_repo_root() / "output" / "per_event_files"
+    return get_repo_root() / "data" / "per_event"
 
 
 def get_per_event_dir() -> Path:
     """
     Path to per-event cenwave photometry CSVs.
-    Same as get_data_dir() — points to output/per_event_files/
+    Same as get_data_dir() — points to data/per_event/
     """
     return get_data_dir()
 
@@ -103,10 +103,10 @@ def get_per_event_dir() -> Path:
 def get_all_events_dir() -> Path:
     """
     Path to compiled all-events catalog files.
-    Location: output/all_events/
+    Location: data/all_events/
     Contains: allparameter.csv, all_objects.csv, allevent_redshift_med.csv, etc.
     """
-    return get_repo_root() / "output" / "all_events"
+    return get_repo_root() / "data" / "all_events"
 
 
 def get_shared_output_dir(science_case: str = "SLSNe") -> Path:
@@ -147,7 +147,7 @@ def get_log_dir(stage: str = "build") -> Path:
 def get_rate_csv_path(filename: str = "fiducial_models.csv") -> Path:
     """
     Default path to Ben's tabulated R(z) CSV file.
-    Location: output/SLSNe/shared/fiducial_models.csv
+    Location: data/rate_models/fiducial_models.csv
 
     Override at CLI with --rate-csv. When Ben sends an updated CSV,
     drop it here and it is picked up automatically.
@@ -157,7 +157,7 @@ def get_rate_csv_path(filename: str = "fiducial_models.csv") -> Path:
         col 1 : f_OH             (O-dependent metallicity fraction)
         col 2 : f_Fe_mixed       (Fe-dependent metallicity fraction)
     """
-    return get_shared_output_dir() / filename
+    return get_repo_root() / "data" / "rate_models" / filename
 
 
 # =============================================================================

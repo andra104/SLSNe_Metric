@@ -55,7 +55,7 @@ mkdir -p output/SLSNe/logs
 # --- Run pipeline ---
 python3 run_slsn_pipeline.py \
     --model        $MODEL \
-    --cadence      $CADENCE \
+    --cadences     $CADENCE \
     --templates-pkl $TEMPLATES \
     --n-cores      $SLURM_CPUS_PER_TASK
 

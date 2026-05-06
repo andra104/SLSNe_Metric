@@ -60,6 +60,7 @@ REPO_ROOT               = Path(__file__).resolve().parent
 SHARED_DIR              = REPO_ROOT / 'output' / 'SLSNe' / 'shared'
 PHYSICAL_TEMPLATES_FILE = SHARED_DIR / 'physical_templates.pkl'
 PHYSICAL_MAG_GRID_FILE  = SHARED_DIR / 'physical_mag_grid.pkl'
+PHYSICAL_SED_CACHE_FILE = SHARED_DIR / 'physical_sed_cache.pkl'
 RATE_CSV                = SHARED_DIR / 'fiducial_models.csv'
 
 # ---------------------------------------------------------------------------
@@ -91,6 +92,8 @@ def parse_args():
                    help="Skip all population generation.")
     p.add_argument('--regen-population', action='store_true',
                    help="Force regenerate populations even if pkl files exist.")
+    p.add_argument('--regen-templates', action='store_true',
+                   help="Force rebuild physical templates even if pkl exists.")
     p.add_argument('--dry-run', action='store_true',
                    help="Print resolved paths and exit without doing any work.")
     return p.parse_args()
@@ -118,8 +121,13 @@ def main():
     if args.dry_run:
         print("\n=== DRY RUN — resolved configuration ===")
         print(f"  repo root              : {repo_root}")
+        ALL_PARAMS_FILE = repo_root / 'SLSNe' / 'slsne' / 'ref_data' / 'all_parameters.txt'
+        print(f"  all_parameters.txt     : {ALL_PARAMS_FILE}  "
+              f"{'OK' if ALL_PARAMS_FILE.exists() else 'MISSING'}")
         print(f"  physical_templates.pkl : {PHYSICAL_TEMPLATES_FILE}  "
-              f"{'OK' if PHYSICAL_TEMPLATES_FILE.exists() else 'MISSING'}")
+              f"{'OK' if PHYSICAL_TEMPLATES_FILE.exists() else 'will build'}")
+        print(f"  physical_sed_cache.pkl : {PHYSICAL_SED_CACHE_FILE}  "
+              f"{'OK' if PHYSICAL_SED_CACHE_FILE.exists() else 'will build'}")
         print(f"  physical_mag_grid.pkl  : {PHYSICAL_MAG_GRID_FILE}  "
               f"{'exists' if PHYSICAL_MAG_GRID_FILE.exists() else 'will build'}")
         print(f"  rate CSV               : {RATE_CSV}  "
@@ -142,13 +150,6 @@ def main():
         return
 
     # --- validate required inputs ---
-    if not PHYSICAL_TEMPLATES_FILE.exists():
-        sys.exit(
-            f"FATAL ERROR: physical_templates.pkl not found:\n"
-            f"  {PHYSICAL_TEMPLATES_FILE}\n"
-            f"Build it first: run prototype_physical_templates.ipynb "
-            f"with REBUILD_PHYSICAL_TEMPLATES=True."
-        )
     if not args.skip_populations and not RATE_CSV.exists():
         sys.exit(
             f"FATAL ERROR: rate CSV not found:\n"
@@ -160,40 +161,70 @@ def main():
     status = {}
 
     # -----------------------------------------------------------------------
-    # Step 1 — Load physical templates
+    # Step 1 — Build or load physical templates
     # -----------------------------------------------------------------------
     print(f"\n{'='*60}")
-    _log("STEP 1 — Load Physical Templates")
+    _log("STEP 1 — Physical Templates")
     t0_step = datetime.now()
     print(f"{'='*60}")
-    _log(f"  Loading from {PHYSICAL_TEMPLATES_FILE}")
 
-    try:
-        import joblib
-        payload = joblib.load(PHYSICAL_TEMPLATES_FILE)
-    except Exception as exc:
-        sys.exit(f"FATAL ERROR: could not load physical_templates.pkl: {exc}")
+    from slsn_metrics.mosfit_interface import build_physical_templates
 
-    templates = LC(
-        lightcurves = payload['lightcurves'],
-        t_grid      = payload.get('t_grid'),
-        names       = payload.get('names'),
-    )
-    templates.sed_grid = payload['sed_grid']
+    ALL_PARAMS_FILE = repo_root / 'SLSNe' / 'slsne' / 'ref_data' / 'all_parameters.txt'
+    if not ALL_PARAMS_FILE.exists():
+        sys.exit(
+            f"FATAL ERROR: all_parameters.txt not found:\n"
+            f"  {ALL_PARAMS_FILE}\n"
+            f"This file contains Gomez+2024 MOSFiT posterior medians for 265 events."
+        )
+
+    if PHYSICAL_TEMPLATES_FILE.exists() and not args.regen_templates:
+        _log(f"  Loading from {PHYSICAL_TEMPLATES_FILE}")
+        try:
+            import joblib
+            payload = joblib.load(PHYSICAL_TEMPLATES_FILE)
+        except Exception as exc:
+            sys.exit(f"FATAL ERROR: could not load physical_templates.pkl: {exc}")
+
+        templates = LC(
+            lightcurves = payload['lightcurves'],
+            t_grid      = payload.get('t_grid'),
+            names       = payload.get('names'),
+        )
+        templates.sed_grid = payload['sed_grid']
+        elapsed = (datetime.now() - t0_step).total_seconds()
+        _log(f"  Loaded {len(templates.names)} events  ({elapsed:.1f}s)")
+        status['physical_templates.pkl'] = ('LOADED', PHYSICAL_TEMPLATES_FILE)
+
+    else:
+        if args.regen_templates:
+            _log("  --regen-templates set: rebuilding.")
+        else:
+            _log("  physical_templates.pkl not found — building from scratch.")
+        _log(f"  Input : {ALL_PARAMS_FILE}")
+        _log(f"  Cache : {PHYSICAL_SED_CACHE_FILE}")
+        _log(f"  Output: {PHYSICAL_TEMPLATES_FILE}")
+        _log("  NOTE: slsnni() runs for all 265 events (~15-20 min first run).")
+        _log("        Subsequent runs load from cache in seconds.")
+
+        templates = build_physical_templates(
+            params_file = ALL_PARAMS_FILE,
+            save_to     = PHYSICAL_TEMPLATES_FILE,
+            cache_file  = PHYSICAL_SED_CACHE_FILE,
+        )
+        elapsed = (datetime.now() - t0_step).total_seconds()
+        _log(f"  Built {len(templates.names)} events  ({elapsed/60:.1f} min)")
+        _log(f"  Wavelength pts: {templates.sed_grid[0]['lam_rest_A'].shape[0]}")
+        status['physical_templates.pkl'] = ('BUILT', PHYSICAL_TEMPLATES_FILE)
+
+    _log(f"  First event : {templates.names[0]}")
+    _log(f"  Last event  : {templates.names[-1]}")
 
     if not templates.sed_grid:
         sys.exit(
-            "FATAL ERROR: physical_templates.pkl loaded but sed_grid is empty.\n"
-            "Rebuild physical_templates.pkl via prototype_physical_templates.ipynb "
-            "with REBUILD_PHYSICAL_TEMPLATES=True."
+            "FATAL ERROR: sed_grid is empty after loading/building templates.\n"
+            "Delete physical_templates.pkl and physical_sed_cache.pkl and rerun."
         )
-
-    n_templates = len(templates.names)
-    elapsed = (datetime.now() - t0_step).total_seconds()
-    _log(f"  Loaded {n_templates} events  ({elapsed:.1f}s)")
-    _log(f"  First event : {templates.names[0]}")
-    _log(f"  Last event  : {templates.names[-1]}")
-    status['physical_templates.pkl'] = ('LOADED', PHYSICAL_TEMPLATES_FILE)
 
     # -----------------------------------------------------------------------
     # Step 2 — Build or load physical magnitude grid

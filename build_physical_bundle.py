@@ -69,9 +69,9 @@ RATE_CSV                = SHARED_DIR / 'fiducial_models.csv'
 Z_GRID = np.linspace(0.02, 5.0, 100)
 
 PHASE_GRID = np.concatenate([
-    np.geomspace(1.0,  100.0, 50),
-    np.linspace(100.0, 400.0, 30),
-])  # 80 points
+    np.geomspace(1.0, 100.0, 50),
+    np.linspace(100.0, 400.0, 30)[1:],  # skip first point (100.0) — already in geomspace
+])  # 79 points, strictly ascending
 
 FILTERS = list('ugrizy')
 

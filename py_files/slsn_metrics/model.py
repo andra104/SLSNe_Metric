@@ -769,16 +769,11 @@ class LC:
                     pickle.dump(checkpoint, f)
                 print(f"[checkpoint] Saved at template {batch_indices[-1]}/{n_templates}")
         
-        # Clean up checkpoint on successful completion
-        if checkpoint_file and checkpoint_file.exists():
-            checkpoint_file.unlink()
-            print(f"[checkpoint] Removed (build complete)")
-        
         self.mag_grid_axes = {'z': z_grid, 'phase': phase_grid}
         print(f"[build_magnitude_grid] Complete. Grid shape: {self.mag_grid[filters[0]].shape}")
-        
+
         self._build_interpolators()
-        
+
         if save_to:
             grid_data = {
                 'mag_grid': self.mag_grid,
@@ -787,6 +782,11 @@ class LC:
             }
             atomic_save_pickle(grid_data, save_to)
             print(f"[build_magnitude_grid] Saved to {save_to}")
+
+        # Clean up checkpoint only after successful save
+        if checkpoint_file and checkpoint_file.exists():
+            checkpoint_file.unlink()
+            print(f"[checkpoint] Removed (build complete, grid saved)")
         
         return self
     
@@ -808,7 +808,8 @@ class LC:
             raise RuntimeError("mag_grid not available. Build or load first.")
         
         z_axis = self.mag_grid_axes['z']
-        ph_axis = self.mag_grid_axes['phase']
+        # Ensure phase grid is strictly ascending (no duplicates at segment junctions)
+        ph_axis = np.unique(self.mag_grid_axes['phase'])
         
         interps = {}
         for filt, cube in self.mag_grid.items():

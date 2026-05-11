@@ -65,7 +65,7 @@ def parse_args():
 
     # Required
     p.add_argument('--model', required=True,
-                   choices=['naive', 'fe_dependent', 'o_dependent'],
+                   choices=['naive', 'fe_dependent', 'o_dependent', 'naive_physical', 'fe_dependent_physical', 'o_dependent_physical'],
                    help="Rate model to use.")
     p.add_argument('--cadences', required=True, nargs='+',
                    help="One or more OpSim cadence names (without .db). "

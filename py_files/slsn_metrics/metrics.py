@@ -182,21 +182,32 @@ def evaluate_slsn(self, dataSlice, slice_point, return_full_obs=True):
     available_bands = [b for b in template.keys() 
                       if isinstance(template[b], dict) and 'ph' in template[b]]
     
-    if not available_bands:
+    # Detect physical template track: .data is empty, .sed_grid is populated
+    # MOSFiT posteriors are constrained by post-peak photometry only (PHASE_GRID = 1..400).
+    # Pre-peak observations (time_rel < 1.0) return np.nan from synthesize_mag_at_z.
+    # Detection efficiency from the physical path is therefore a lower bound on the
+    # true high-z detection rate — this is intentional and scientifically correct.
+    is_physical = (
+        len(available_bands) == 0
+        and hasattr(self.lc_model, 'sed_grid')
+        and bool(self.lc_model.sed_grid)
+    )
+
+    if not available_bands and not is_physical:
         if return_full_obs:
             return np.array([]), np.array([]), np.array([]), None
         return np.array([]), np.array([]), np.array([])
-    
+
     # Process observations
     mjds = dataSlice[self.mjdCol]
     filts = dataSlice[self.filterCol]
     m5 = dataSlice[self.m5Col]
-    
+
     # Rest-frame time relative to peak
     time_rel = (mjds - self.mjd0 - peak_time) / (1.0 + z)
-    
+
     mags = np.full_like(mjds, np.nan, dtype=float)
-    
+
     # For each observation
     for i, (t, filt) in enumerate(zip(time_rel, filts)):
         # Find best catalog band for this LSST filter

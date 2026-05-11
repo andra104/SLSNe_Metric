@@ -209,49 +209,66 @@ def evaluate_slsn(self, dataSlice, slice_point, return_full_obs=True):
     mags = np.full_like(mjds, np.nan, dtype=float)
 
     # For each observation
-    for i, (t, filt) in enumerate(zip(time_rel, filts)):
-        # Find best catalog band for this LSST filter
-        catalog_band = None
-        for cat_b in available_bands:
-            lsst_b = map_catalog_to_lsst_band(cat_b)
-            if lsst_b == filt:
-                catalog_band = cat_b
-                break
-        
-        if catalog_band is None:
-            # Try to find any usable band and apply color correction
+    if is_physical:
+        # Physical template path: full SED synthesis via synthesize_mag_at_z().
+        # Takes LSST filter directly — no catalog band lookup or color offset needed.
+        # synthesize_mag_at_z() applies luminosity distance internally — do NOT add dm.
+        # Pre-peak phases (time_rel < 1.0) return np.nan — intentional lower bound.
+        sed_entry = self.lc_model.sed_grid[tpl_idx]
+        for i, (t, filt) in enumerate(zip(time_rel, filts)):
+            m_app = synthesize_mag_at_z(sed_entry, float(t), z, filt)
+            if not np.isfinite(m_app):
+                continue
+            A_filt = float(slice_point.get(f'A_{filt}', 0.0))
+            if A_filt == 0.0:
+                dust_model = DustValues()
+                A_filt = dust_model.ax1[filt] * ebv
+            mags[i] = m_app + A_filt
+    else:
+        # GP template path: catalog band interpolation — unchanged.
+        for i, (t, filt) in enumerate(zip(time_rel, filts)):
+            # Find best catalog band for this LSST filter
+            catalog_band = None
             for cat_b in available_bands:
                 lsst_b = map_catalog_to_lsst_band(cat_b)
-                if lsst_b:  # Any valid mapping
+                if lsst_b == filt:
                     catalog_band = cat_b
                     break
-        
-        if catalog_band is None:
-            continue  # No usable band, leave as NaN
-        
-        # Interpolate absolute magnitude from template
-        M_abs = self.lc_model.interp(t, catalog_band, tpl_idx)
-        
-        if not np.isfinite(M_abs):
-            continue
-        
-        # Apply color offset if bands don't match exactly
-        lsst_mapped = map_catalog_to_lsst_band(catalog_band)
-        color_offset = get_color_offset(catalog_band, filt) if lsst_mapped != filt else 0.0
-        
-        # Apparent magnitude = Absolute + DM + Extinction + Color
-        m_app = M_abs + dm + color_offset
-        
-        # Add extinction (per-filter if available, else generic)
-        A_filt = slice_point.get(f'A_{filt}', 0.0)
-        if A_filt == 0.0:
-            # Fallback: use dust model
-            dust_model = DustValues()
-            A_filt = dust_model.ax1[filt] * ebv
-        
-        m_app += A_filt
-        
-        mags[i] = m_app
+
+            if catalog_band is None:
+                # Try to find any usable band and apply color correction
+                for cat_b in available_bands:
+                    lsst_b = map_catalog_to_lsst_band(cat_b)
+                    if lsst_b:  # Any valid mapping
+                        catalog_band = cat_b
+                        break
+
+            if catalog_band is None:
+                continue  # No usable band, leave as NaN
+
+            # Interpolate absolute magnitude from template
+            M_abs = self.lc_model.interp(t, catalog_band, tpl_idx)
+
+            if not np.isfinite(M_abs):
+                continue
+
+            # Apply color offset if bands don't match exactly
+            lsst_mapped = map_catalog_to_lsst_band(catalog_band)
+            color_offset = get_color_offset(catalog_band, filt) if lsst_mapped != filt else 0.0
+
+            # Apparent magnitude = Absolute + DM + Extinction + Color
+            m_app = M_abs + dm + color_offset
+
+            # Add extinction (per-filter if available, else generic)
+            A_filt = slice_point.get(f'A_{filt}', 0.0)
+            if A_filt == 0.0:
+                # Fallback: use dust model
+                dust_model = DustValues()
+                A_filt = dust_model.ax1[filt] * ebv
+
+            m_app += A_filt
+
+            mags[i] = m_app
     
     # Calculate SNR
     snr = _m52snr(mags, m5)

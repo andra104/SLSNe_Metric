@@ -237,6 +237,10 @@ def main():
         population = generate_SLSN_PopSlicer(
             lc_model=templates,
             load_from=str(pop_pkl),
+            z_min=args.z_min,
+            z_max=args.z_max,
+            max_events=args.max_events,
+            seed=args.seed,
             make_debug_plots=False
         )
     else:

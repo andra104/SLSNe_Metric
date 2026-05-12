@@ -216,7 +216,12 @@ def evaluate_slsn(self, dataSlice, slice_point, return_full_obs=True):
         # Pre-peak phases (time_rel < 1.0) return np.nan — intentional lower bound.
         sed_entry = self.lc_model.sed_grid[tpl_idx]
         for i, (t, filt) in enumerate(zip(time_rel, filts)):
-            m_app = synthesize_mag_at_z(sed_entry, float(t), z, filt)
+            # Quantize phase to 0.2-day bins for cache key — coarser than
+            # physical PHASE_GRID spacing but negligible science impact.
+            phase_bin_idx = int(phase_bucket_vec(np.array([t]), return_index=True)[0])
+            m_app = synthesize_mag_at_z_cached(
+                self._mag_cache, sed_entry, phase_bin_idx, z, filt
+            )
             if not np.isfinite(m_app):
                 continue
             A_filt = float(slice_point.get(f'A_{filt}', 0.0))

@@ -260,8 +260,13 @@ class LC:
         elif load_from:
             if not os.path.exists(load_from):
                 raise FileNotFoundError(f"Templates not found: {load_from}")
-            with open(load_from, "rb") as f:
-                obj = pickle.load(f)
+            import joblib
+            try:
+                obj = joblib.load(load_from)
+            except Exception:
+                # Fallback for plain pickle files (e.g. legacy GP templates)
+                with open(load_from, "rb") as f:
+                    obj = pickle.load(f)
             if "lightcurves" not in obj:
                 raise ValueError("templates.pkl missing 'lightcurves'")
             self.data = obj["lightcurves"]

@@ -57,9 +57,11 @@ python3 run_slsn_pipeline.py \
     --model        $MODEL \
     --cadences      $CADENCE \
     --templates-pkl $TEMPLATES \
-    --z-max        5.0 \
+    --z-min        0.1 \
+    --z-max        1.0 \
     --max-events   10000 \
-    --only-metrics detect \
+    --only-metrics elasticc \
+    --store-obs-mode meta \
     --n-cores      $SLURM_CPUS_PER_TASK
 
 EXIT_CODE=$?

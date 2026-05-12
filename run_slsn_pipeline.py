@@ -185,6 +185,38 @@ def main():
         sys.exit(f"ERROR: rate CSV not found: {rate_csv}\n"
                  f"       Copy fiducial_models.csv to {rate_csv} or pass --rate-csv")
 
+    # --- MJD0: auto-read from cadence db unless user explicitly overrode ---
+    # baseline_v5.3.0 starts at MJD 61208.2 vs 60980.5 for all other cadences.
+    # Using the wrong MJD0 offsets every rest-frame phase by (ΔMJD / (1+z)) days.
+    import sqlite3 as _sqlite3
+    _mjd0_default = 60980.5
+    _cadence_mjd0s = {}
+    for _c in args.cadences:
+        _cdb = str(get_cadence_path(_c))
+        try:
+            _con = _sqlite3.connect(_cdb)
+            _mjd0_c = _con.execute(
+                "SELECT MIN(observationStartMJD) FROM observations"
+            ).fetchone()[0]
+            _con.close()
+            _cadence_mjd0s[_c] = float(_mjd0_c)
+        except Exception as _e:
+            _log(f"  WARNING: could not read MJD0 from {_c}: {_e}")
+            _cadence_mjd0s[_c] = _mjd0_default
+
+    _mjd0_values = list(_cadence_mjd0s.values())
+    if args.mjd0 != _mjd0_default:
+        # User explicitly passed --mjd0 — respect it
+        _log(f"  MJD0 set by --mjd0 flag: {args.mjd0:.2f}")
+    else:
+        # Auto-read from first cadence db
+        args.mjd0 = _mjd0_values[0]
+        _log(f"  MJD0 auto-read from {args.cadences[0]}: {args.mjd0:.2f}")
+        if len(set(round(v, 1) for v in _mjd0_values)) > 1:
+            _log(f"  WARNING: cadences have different MJD0 values — {_cadence_mjd0s}")
+            _log(f"  WARNING: using MJD0={args.mjd0:.2f} from first cadence only")
+            _log(f"  WARNING: do not mix cadences with different survey starts in one run")
+
     # --- Step 1: Load templates ---
     print(f"\n{'='*60}")
     _log("CELL 2 — Load Templates")

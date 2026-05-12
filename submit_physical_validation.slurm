@@ -25,7 +25,7 @@
 
 # --- Configuration ---
 MODEL="fe_dependent_physical"           # naive | fe_dependent | o_dependent | *_physical variants
-CADENCE="baseline_v5.1.0_10yrs"
+CADENCE="baseline_v5.3.0_10yrs"
 TEMPLATES="output/SLSNe/shared/physical_templates.pkl"
 
 # --- Environment ---

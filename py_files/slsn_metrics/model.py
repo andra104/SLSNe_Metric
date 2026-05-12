@@ -155,7 +155,7 @@ def synthesize_mag_at_z(sed_grid: dict, phase_rest: float, z: float, filt: str) 
     # Calculate magnitude
     sed = Sed(wavelen=lam_obs_nm, flambda=Flambda_obs)
     try:
-        mag = float(sed.calcMag(bp))  # ← FIX: calcMag not calc_mag
+        mag = float(sed.calc_mag(bp))
         return mag if np.isfinite(mag) else np.nan
     except Exception:
         return np.nan

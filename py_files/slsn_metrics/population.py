@@ -775,6 +775,27 @@ def generate_SLSN_PopSlicer(lc_model,
         n_loaded = len(slice_data['ra'])
         print(f"[LOAD] Loaded {n_loaded} SLSNe from {load_from}")
 
+        # Apply z_min/z_max filter BEFORE max_events cap so the subsample
+        # reflects the requested redshift range, not the full population.
+        if z_min is not None or z_max is not None:
+            z_arr  = np.asarray(slice_data['z'])
+            z_mask = np.ones(n_loaded, dtype=bool)
+            if z_min is not None:
+                z_mask &= z_arr >= z_min
+            if z_max is not None:
+                z_mask &= z_arr <= z_max
+            keep_z = np.where(z_mask)[0]
+            slice_data = {
+                k: (np.asarray(v)[keep_z]
+                    if (hasattr(v, '__len__') and np.asarray(v).shape
+                        and np.asarray(v).shape[0] == n_loaded)
+                    else v)
+                for k, v in slice_data.items()
+            }
+            n_loaded = len(slice_data['ra'])
+            print(f"[LOAD] z-filtered to {n_loaded} events "
+                  f"(z_min={z_min}, z_max={z_max})")
+
     # Cap population BEFORE building the slicer so MAF indexing is consistent
         if max_events is not None and n_loaded > max_events:
             rng_sub = np.random.default_rng(seed)

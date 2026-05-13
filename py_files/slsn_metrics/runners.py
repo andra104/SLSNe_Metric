@@ -15,7 +15,12 @@ import rubin_sim.maf.db as db
 import astropy.units as u
 from astropy.cosmology import Planck18 as cosmo
 from rubin_sim.maf.metric_bundles import MetricBundle, MetricBundleGroup
-from .metrics import SLSN_Detect_Metric, SLSN_CharacterizeMetric, SLSN_VillarMetric, SLSN_ELAsTiCC_Metric, SLSN_SpecTriggerMetric
+from .metrics import (
+    SLSN_Detect_Metric, SLSN_CharacterizeMetric, SLSN_VillarMetric,
+    SLSN_ELAsTiCC_Metric, SLSN_SpecTriggerMetric,
+    SLSN_Detect_Physical_Metric, SLSN_Characterize_Physical_Metric,
+    SLSN_SpecTrigger_Physical_Metric, SLSN_Villar_Physical_Metric,
+)
 from .diagnostics import plot_healpix_efficiency
 from .paths import (
     get_repo_root,
@@ -30,11 +35,17 @@ from .paths import (
 # Used for .npy filenames, --only-metrics filtering, and post-run verification.
 # Update here when adding a new metric class — nowhere else.
 _METRIC_NAME_MAP = {
+    # GP track metrics
     'SLSN_Detect_Metric':      'detect',
     'SLSN_CharacterizeMetric': 'characterize',
     'SLSN_VillarMetric':       'villar',
     'SLSN_ELAsTiCC_Metric':    'elasticc',
     'SLSN_SpecTriggerMetric':  'spectrigger',
+    # Physical track metrics (post-peak only)
+    'SLSN_Detect_Physical_Metric':       'detect',
+    'SLSN_Characterize_Physical_Metric': 'characterize',
+    'SLSN_Villar_Physical_Metric':       'villar',
+    'SLSN_SpecTrigger_Physical_Metric':  'spectrigger',
 }
 
 
@@ -964,18 +975,37 @@ def run_slsn_multi_metrics(
     _short_map = _METRIC_NAME_MAP
 
     if metrics_list is None:
-        _all = [
-            SLSN_Detect_Metric(lc_model=templates, mjd0=mjd0,
-                               store_obs_mode=store_obs_mode),
-            SLSN_CharacterizeMetric(lc_model=templates, mjd0=mjd0,
-                                    store_obs_mode=store_obs_mode),
-            SLSN_VillarMetric(lc_model=templates, mjd0=mjd0,
-                              store_obs_mode=store_obs_mode),
-            SLSN_ELAsTiCC_Metric(lc_model=templates, mjd0=mjd0,
+        # Select metric set based on template track
+        # Physical model names end with '_physical' — use physical metric variants
+        _is_physical_track = (
+            model_name is not None and str(model_name).endswith('_physical')
+        )
+        if _is_physical_track:
+            _all = [
+                SLSN_Detect_Physical_Metric(lc_model=templates, mjd0=mjd0,
+                                            store_obs_mode=store_obs_mode),
+                SLSN_Characterize_Physical_Metric(lc_model=templates, mjd0=mjd0,
+                                                  store_obs_mode=store_obs_mode),
+                SLSN_Villar_Physical_Metric(lc_model=templates, mjd0=mjd0,
+                                            store_obs_mode=store_obs_mode),
+                SLSN_ELAsTiCC_Metric(lc_model=templates, mjd0=mjd0,
+                                     store_obs_mode=store_obs_mode),
+                SLSN_SpecTrigger_Physical_Metric(lc_model=templates, mjd0=mjd0,
+                                                 store_obs_mode=store_obs_mode),
+            ]
+        else:
+            _all = [
+                SLSN_Detect_Metric(lc_model=templates, mjd0=mjd0,
+                                   store_obs_mode=store_obs_mode),
+                SLSN_CharacterizeMetric(lc_model=templates, mjd0=mjd0,
+                                        store_obs_mode=store_obs_mode),
+                SLSN_VillarMetric(lc_model=templates, mjd0=mjd0,
                                   store_obs_mode=store_obs_mode),
-            SLSN_SpecTriggerMetric(lc_model=templates, mjd0=mjd0,
-                                   store_obs_mode=store_obs_mode)
-        ]
+                SLSN_ELAsTiCC_Metric(lc_model=templates, mjd0=mjd0,
+                                     store_obs_mode=store_obs_mode),
+                SLSN_SpecTriggerMetric(lc_model=templates, mjd0=mjd0,
+                                       store_obs_mode=store_obs_mode),
+            ]
         if only_metrics:
             metrics_list = [m for m in _all
                             if _short_map[m.__class__.__name__] in only_metrics]
@@ -1218,18 +1248,36 @@ def _run_cadence_worker(args):
     n_events = len(population.slice_points['distance'])
     note     = "scheduler_note not like 'long%'" if ignore_triples else ""
 
-    _all_metrics = [
-        SLSN_Detect_Metric(lc_model=templates, mjd0=mjd0,
-                           store_obs_mode=store_obs_mode),
-        SLSN_CharacterizeMetric(lc_model=templates, mjd0=mjd0,
-                                store_obs_mode=store_obs_mode),
-        SLSN_VillarMetric(lc_model=templates, mjd0=mjd0,
-                          store_obs_mode=store_obs_mode),
-        SLSN_ELAsTiCC_Metric(lc_model=templates, mjd0=mjd0,
-                              store_obs_mode=store_obs_mode),
-        SLSN_SpecTriggerMetric(lc_model=templates, mjd0=mjd0,
+    # Select metric set based on template track
+    _is_physical_track = (
+        model_name is not None and str(model_name).endswith('_physical')
+    )
+    if _is_physical_track:
+        _all_metrics = [
+            SLSN_Detect_Physical_Metric(lc_model=templates, mjd0=mjd0,
+                                        store_obs_mode=store_obs_mode),
+            SLSN_Characterize_Physical_Metric(lc_model=templates, mjd0=mjd0,
+                                              store_obs_mode=store_obs_mode),
+            SLSN_Villar_Physical_Metric(lc_model=templates, mjd0=mjd0,
+                                        store_obs_mode=store_obs_mode),
+            SLSN_ELAsTiCC_Metric(lc_model=templates, mjd0=mjd0,
+                                 store_obs_mode=store_obs_mode),
+            SLSN_SpecTrigger_Physical_Metric(lc_model=templates, mjd0=mjd0,
+                                             store_obs_mode=store_obs_mode),
+        ]
+    else:
+        _all_metrics = [
+            SLSN_Detect_Metric(lc_model=templates, mjd0=mjd0,
                                store_obs_mode=store_obs_mode),
-    ]
+            SLSN_CharacterizeMetric(lc_model=templates, mjd0=mjd0,
+                                    store_obs_mode=store_obs_mode),
+            SLSN_VillarMetric(lc_model=templates, mjd0=mjd0,
+                              store_obs_mode=store_obs_mode),
+            SLSN_ELAsTiCC_Metric(lc_model=templates, mjd0=mjd0,
+                                 store_obs_mode=store_obs_mode),
+            SLSN_SpecTriggerMetric(lc_model=templates, mjd0=mjd0,
+                                   store_obs_mode=store_obs_mode),
+        ]
     _short_map = _METRIC_NAME_MAP
     if only_metrics:
         metrics_list = [m for m in _all_metrics

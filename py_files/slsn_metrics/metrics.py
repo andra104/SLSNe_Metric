@@ -888,3 +888,387 @@ class SLSN_SpecTriggerMetric(SLSN_Base_Metric):
 
 # Alias for backward compatibility
 Detect_Metric = SLSN_Detect_Metric
+
+# =============================================================================
+# Physical template detection function (post-peak only)
+# =============================================================================
+
+def detect_slsn_physical(filters, snr, times, mags, obs_record):
+    """
+    SLSN detection criterion for physical templates (post-peak only).
+
+    Physical templates cover phases 1-400 days post-peak only.
+    The rising LC criterion from detect_slsn() (Firth+2015) cannot
+    be satisfied — all observations are post-peak by construction.
+
+    Replaces rising LC with: observations on >=2 different nights
+    with SNR>=5, which is achievable post-peak.
+
+    Criteria:
+    1. >=2 filters with SNR>=5 detections (same as GP)
+    2. >=2 SNR>=5 observations on different nights (replaces rising LC)
+    3. Temporal baseline >=15 days among SNR>=5 detections (same as GP)
+
+    Scientific justification: physical templates model the scenario
+    where Rubin discovers a SLSN post-peak. Multi-night, multi-band
+    post-peak coverage is sufficient for classification and follow-up.
+
+    References
+    ----------
+    Firth+2015 (original detect_slsn criteria, modified here)
+    Inserra+2024 (characterization criteria, post-peak focus)
+    """
+    # 1) Multi-band detection — identical to GP criterion
+    detected_filters = []
+    for f in np.unique(filters):
+        mask = (filters == f) & (snr >= 5)
+        if np.sum(mask) >= 1:
+            detected_filters.append(f)
+
+    if len(detected_filters) < 2:
+        return False
+
+    # 2) Multi-night coverage — replaces rising LC requirement
+    # Require >=2 SNR>=5 observations separated by >=0.5 days (different nights)
+    detected_mask = snr >= 5
+    if np.sum(detected_mask) < 2:
+        return False
+
+    t_det = np.sort(times[detected_mask])
+    multi_night = False
+    for i in range(len(t_det) - 1):
+        if t_det[i+1] - t_det[i] >= 0.5:
+            multi_night = True
+            break
+
+    if not multi_night:
+        return False
+
+    # 3) Temporal baseline >=15 days — identical to GP criterion
+    duration = np.ptp(times[detected_mask])
+    if duration < 15:
+        return False
+
+    return True
+
+
+# =============================================================================
+# Physical template metric variants
+# =============================================================================
+
+class SLSN_Detect_Physical_Metric(SLSN_Detect_Metric):
+    """
+    Detection metric for physical templates (post-peak only).
+
+    Identical to SLSN_Detect_Metric but uses detect_slsn_physical()
+    which replaces the rising LC criterion with multi-night coverage.
+
+    Physical templates cover phases 1-400 days post-peak only —
+    rising LC detection is impossible by construction. This variant
+    asks: did Rubin observe this SLSN post-peak with sufficient
+    multi-band, multi-night coverage for confident classification?
+
+    See detect_slsn_physical() for full criterion documentation.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.metricName = kwargs.get('metricName', 'SLSN_Detect_Physical')
+
+    def detect(self, filters, snr, times, obs_record):
+        """Use physical detection gate instead of GP gate."""
+        mags = np.asarray(obs_record.get('mag_obs', []))
+        return detect_slsn_physical(filters, snr, times, mags, obs_record)
+
+
+class SLSN_Characterize_Physical_Metric(SLSN_CharacterizeMetric):
+    """
+    Characterization metric for physical templates (post-peak only).
+
+    Identical to SLSN_CharacterizeMetric (Inserra+2024) but:
+    1. Gates on detect_slsn_physical() instead of detect_slsn()
+    2. Drops the near-peak (+-10d) criterion — physical templates
+       have no pre-peak coverage so this criterion can never be
+       satisfied. Post-peak coverage from +1d onward is used instead.
+
+    Criteria (post-peak adapted):
+    - Passes detect_slsn_physical() gate
+    - >=5 epochs with SNR>=5
+    - >=3 different filters
+    - >=1 epoch beyond +30 days post-peak (unchanged)
+
+    Scientific justification: post-peak characterization constrains
+    ejecta mass, magnetar spin-down timescale, and opacity via
+    MOSFiT-style fitting. The near-peak criterion from Inserra+2024
+    applies to the full LC — here we characterize the post-peak tail.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.metricName = 'SLSN_Characterize_Physical'
+
+    def run(self, dataSlice, slice_point=None):
+        snr, filters, times, obs_record = evaluate_slsn(
+            self, dataSlice, slice_point, return_full_obs=True
+        )
+
+        characterized = False
+        n_epochs = 0
+        n_filters_char = 0
+
+        if obs_record is None or len(snr) == 0:
+            if self.store_obs_mode == "full":
+                self.obs_records[slice_point['sid']] = {
+                    'characterized': False,
+                    'sid': int(slice_point['sid']),
+                    'z': float(slice_point['z']),
+                    'peak_time': float(slice_point['peak_time']),
+                    'peak_mjd': self.mjd0 + float(slice_point['peak_time']),
+                    'mjd_obs': [], 'mag_obs': [], 'snr_obs': [], 'filter': []
+                }
+            return 0.0
+
+        # Physical gate — no rising LC required
+        mags = np.asarray(obs_record['mag_obs'], float)
+        detected = detect_slsn_physical(filters, snr, times, mags, obs_record)
+
+        if detected:
+            good = snr >= 5
+            n_epochs = int(np.sum(good))
+            n_filters_char = np.unique(filters[good]).size if np.any(good) else 0
+
+            peak_mjd = self.mjd0 + float(slice_point['peak_time'])
+            mjd_obs  = np.asarray(obs_record['mjd_obs'], float)
+
+            has_enough_epochs  = n_epochs >= 5
+            has_enough_filters = n_filters_char >= 3
+
+            # Post-peak only: drop near-peak (+-10d) criterion
+            # Require >=1 epoch beyond +30 days post-peak (Inserra+2024)
+            post_peak = good & (mjd_obs > (peak_mjd + 30.0))
+            has_post_peak = np.sum(post_peak) >= 1
+
+            characterized = (has_enough_epochs and has_enough_filters
+                             and has_post_peak)
+
+        if self.store_obs_mode == "full":
+            obs_record.update({
+                'characterized': characterized,
+                'n_epochs': n_epochs,
+                'n_filters_char': n_filters_char,
+                'sid': int(slice_point['sid']),
+                'z': float(slice_point['z']),
+                'ra': float(slice_point['ra']),
+                'dec': float(slice_point['dec']),
+                'distance_Mpc': float(slice_point['distance']),
+                'ebv': float(slice_point['ebv']),
+                'peak_time': float(slice_point['peak_time']),
+            })
+            self.obs_records[slice_point['sid']] = obs_record
+
+        return 1.0 if characterized else 0.0
+
+
+class SLSN_SpecTrigger_Physical_Metric(SLSN_SpecTriggerMetric):
+    """
+    Spectroscopic trigger metric for physical templates (post-peak only).
+
+    Identical to SLSN_SpecTriggerMetric but:
+    1. Gates on detect_slsn_physical() instead of detect_slsn()
+    2. Near-peak window is post-peak only (0 to +peak_window days
+       after peak instead of +-peak_window days)
+
+    Asks: is this post-peak SLSN bright enough and well-sampled
+    enough for spectroscopic follow-up?
+
+    Physical justification: post-peak spectroscopy is common in
+    SLSN follow-up programs. A SLSN fading slowly post-peak and
+    still bright enough for Keck (mag<23.0) is a valid trigger
+    target even without having caught the rise.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.metricName = 'SLSN_SpecTrigger_Physical'
+
+    def run(self, dataSlice, slice_point=None):
+        snr, filters, times, obs_record = evaluate_slsn(
+            self, dataSlice, slice_point, return_full_obs=True
+        )
+
+        spec_triggered      = False
+        near_peak_pass      = False
+        multifilter_pass    = False
+        brightness_pass     = False
+        slow_evolution_pass = False
+
+        if obs_record is None or snr.size == 0:
+            if self.store_obs_mode == "full":
+                self.obs_records[slice_point['sid']] = {
+                    'spec_trigger': False,
+                    'sid': int(slice_point['sid']),
+                    'z': float(slice_point['z']),
+                    'peak_time': float(slice_point['peak_time']),
+                }
+            return 0.0
+
+        mags    = np.asarray(obs_record['mag_obs'], float)
+        mjd_obs = np.asarray(obs_record['mjd_obs'], float)
+
+        # Physical gate — no rising LC required
+        detected = detect_slsn_physical(filters, snr, mjd_obs, mags, obs_record)
+
+        if detected:
+            peak_mjd = self.mjd0 + float(slice_point['peak_time'])
+            good     = snr >= 5
+
+            # Post-peak only window: 0 to +peak_window days after peak
+            near = good & (mjd_obs >= peak_mjd) & (
+                mjd_obs <= peak_mjd + self.peak_window)
+
+            # Criterion 1: >=n_near_peak detections in post-peak window
+            near_peak_pass = int(np.sum(near)) >= self.n_near_peak
+
+            # Criterion 2: >=2 filters in post-peak window
+            if np.any(near):
+                multifilter_pass = len(np.unique(filters[near])) >= 2
+
+            # Criterion 3: Brightness — same as GP
+            inj_col = 'peak_app_mag_ebv_r'
+            if inj_col in slice_point:
+                peak_mag = float(slice_point[inj_col])
+            elif np.any(near):
+                peak_mag = float(np.nanmin(mags[near]))
+            else:
+                peak_mag = np.nan
+
+            if np.isfinite(peak_mag):
+                brightness_pass = peak_mag <= self.mag_limit
+
+            # Criterion 4: Slow evolution — same as GP
+            window = good & (mjd_obs >= peak_mjd) & (
+                mjd_obs <= peak_mjd + 45.0)
+            if np.sum(window) >= 2:
+                t_w = mjd_obs[window]
+                m_w = mags[window]
+                order = np.argsort(t_w)
+                t_w, m_w = t_w[order], m_w[order]
+                for j in range(len(t_w) - 1):
+                    if (t_w[j+1] - t_w[j]) <= 35.0:
+                        if abs(m_w[j+1] - m_w[j]) < self.decline_limit:
+                            slow_evolution_pass = True
+                            break
+
+            spec_triggered = (near_peak_pass and multifilter_pass
+                              and brightness_pass and slow_evolution_pass)
+
+        if self.store_obs_mode in ("full", "meta"):
+            obs_record.update({
+                'spec_trigger':       spec_triggered,
+                'near_peak_pass':     near_peak_pass,
+                'multifilter_pass':   multifilter_pass,
+                'brightness_pass':    brightness_pass,
+                'slow_evolution_pass': slow_evolution_pass,
+                'sid':  int(slice_point['sid']),
+                'z':    float(slice_point['z']),
+                'ra':   float(slice_point['ra']),
+                'dec':  float(slice_point['dec']),
+                'distance_Mpc': float(slice_point['distance']),
+                'ebv':  float(slice_point['ebv']),
+                'peak_time': float(slice_point['peak_time']),
+            })
+            self.obs_records[slice_point['sid']] = obs_record
+
+        return 1.0 if spec_triggered else 0.0
+
+
+class SLSN_Villar_Physical_Metric(SLSN_VillarMetric):
+    """
+    Villar+2018 light curve quality metric for physical templates.
+
+    Identical to SLSN_VillarMetric but M3 (measurable duration)
+    drops the rise requirement — only post-peak decline by >=1 mag
+    must be observed in r-band.
+
+    Physical templates cover phases 1-400 days post-peak only.
+    M3 in the GP track requires both rise AND decline in r-band.
+    For physical templates, only decline is observable.
+
+    M1 (>10 total detections) and M2 (>20 near-peak detections)
+    are unchanged — they do not require pre-peak coverage.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.metricName = 'SLSN_Villar_Physical'
+
+    def run(self, dataSlice, slice_point=None):
+        snr, filters, times, obs_record = evaluate_slsn(
+            self, dataSlice, slice_point, return_full_obs=True
+        )
+
+        m1_pass = False
+        m2_pass = False
+        m3_pass = False
+
+        if obs_record is None or snr.size == 0:
+            if self.store_obs_mode == "full":
+                self.obs_records[slice_point['sid']] = {
+                    'villar_pass': False,
+                    'm1_total_det': False,
+                    'm2_peak_det': False,
+                    'm3_duration_r': False,
+                    'sid': int(slice_point['sid']),
+                    'z': float(slice_point['z']),
+                    'peak_time': float(slice_point['peak_time']),
+                }
+            return 0.0
+
+        mags    = np.asarray(obs_record['mag_obs'], float)
+        mjd_obs = np.asarray(obs_record['mjd_obs'], float)
+        good    = snr >= 5
+
+        # M1: unchanged
+        m1_pass = int(np.sum(good)) > self.n_det_total
+
+        # M2: unchanged
+        peak_mjd = self.mjd0 + float(slice_point['peak_time'])
+        if np.any(good):
+            peak_mag_obs = np.nanmin(mags[good])
+            if np.isfinite(peak_mag_obs):
+                near_peak = good & (mags <= peak_mag_obs + self.peak_window_mag)
+                m2_pass = int(np.sum(near_peak)) > self.n_det_peak
+
+        # M3: post-peak decline only — drop rise requirement
+        # Physical templates are post-peak only; rise cannot be observed.
+        # Criterion: decline by >=1 mag observed in r-band post-peak.
+        r_good = good & (filters == 'r')
+        if np.sum(r_good) >= 2:
+            t_r = mjd_obs[r_good]
+            m_r = mags[r_good]
+            order   = np.argsort(t_r)
+            t_r, m_r = t_r[order], m_r[order]
+            peak_mag_r = np.nanmin(m_r)
+            post = t_r > t_r[np.argmin(m_r)]
+            decline_measured = np.any(post) and np.any(m_r[post] >= peak_mag_r + 1.0)
+            m3_pass = decline_measured  # rise dropped for physical templates
+
+        villar_pass = m1_pass or m2_pass or m3_pass
+
+        if self.store_obs_mode in ("full", "meta"):
+            obs_record.update({
+                'villar_pass':   villar_pass,
+                'm1_total_det':  m1_pass,
+                'm2_peak_det':   m2_pass,
+                'm3_duration_r': m3_pass,
+                'sid':  int(slice_point['sid']),
+                'z':    float(slice_point['z']),
+                'ra':   float(slice_point['ra']),
+                'dec':  float(slice_point['dec']),
+                'distance_Mpc': float(slice_point['distance']),
+                'ebv':  float(slice_point['ebv']),
+                'peak_time': float(slice_point['peak_time']),
+            })
+            self.obs_records[slice_point['sid']] = obs_record
+
+        return 1.0 if villar_pass else 0.0

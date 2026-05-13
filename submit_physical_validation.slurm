@@ -58,8 +58,8 @@ python3 run_slsn_pipeline.py \
     --cadences      $CADENCE \
     --templates-pkl $TEMPLATES \
     --z-min        0.1 \
-    --z-max        1.0 \
-    --max-events   1000 \
+    --z-max        5.0 \
+    --max-events   50000 \
     --store-obs-mode meta \
     --n-cores      $SLURM_CPUS_PER_TASK
 

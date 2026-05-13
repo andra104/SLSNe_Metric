@@ -131,6 +131,12 @@ from .metrics import (
     Detect_Metric,  # alias
     detect_slsn,
     evaluate_slsn,
+    # Physical template variants (post-peak only)
+    detect_slsn_physical,
+    SLSN_Detect_Physical_Metric,
+    SLSN_Characterize_Physical_Metric,
+    SLSN_Villar_Physical_Metric,
+    SLSN_SpecTrigger_Physical_Metric,
 )
 
 #Runners (detect and metrics)
@@ -201,7 +207,7 @@ __all__ = [
     # Population
     "generate_SLSN_PopSlicer",
     
-    # Metrics
+    # Metrics — GP track
     "SLSN_Detect_Metric",
     "SLSN_CharacterizeMetric",
     "SLSN_VillarMetric",
@@ -209,6 +215,12 @@ __all__ = [
     "SLSN_SpecTriggerMetric",
     "detect_slsn",
     "evaluate_slsn",
+    # Metrics — physical track
+    "detect_slsn_physical",
+    "SLSN_Detect_Physical_Metric",
+    "SLSN_Characterize_Physical_Metric",
+    "SLSN_Villar_Physical_Metric",
+    "SLSN_SpecTrigger_Physical_Metric",
     
     # Diagnostics
     "diagnose_abs_from_templates",

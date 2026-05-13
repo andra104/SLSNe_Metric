@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
-#SBATCH --time=02:00:00
+#SBATCH --time=04:00:00
 #SBATCH --output=output/SLSNe/logs/slsn_%j_%x.out
 #SBATCH --error=output/SLSNe/logs/slsn_%j_%x.err
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -59,7 +59,7 @@ python3 run_slsn_pipeline.py \
     --templates-pkl $TEMPLATES \
     --z-min        0.1 \
     --z-max        1.0 \
-    --max-events   10000 \
+    --max-events   1000 \
     --only-metrics elasticc \
     --store-obs-mode meta \
     --n-cores      $SLURM_CPUS_PER_TASK

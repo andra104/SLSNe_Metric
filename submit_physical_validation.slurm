@@ -60,7 +60,6 @@ python3 run_slsn_pipeline.py \
     --z-min        0.1 \
     --z-max        1.0 \
     --max-events   1000 \
-    --only-metrics elasticc \
     --store-obs-mode meta \
     --n-cores      $SLURM_CPUS_PER_TASK
 

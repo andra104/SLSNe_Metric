@@ -37,7 +37,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64GB
-#SBATCH --time=02:00:00
+#SBATCH --time=12:00:00
 #SBATCH --output=output/logs/build/rebuild_mag_grid_%j.log
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=andra104@umn.edu

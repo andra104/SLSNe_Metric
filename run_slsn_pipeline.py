@@ -226,6 +226,25 @@ def main():
     elapsed = (datetime.now() - t0_step).total_seconds()
     _log(f"  Loaded {len(templates.data)} templates from {templates_pkl}  ({elapsed:.1f}s)")
 
+    # --- Load physical mag grid if available (fast interpolation path) ---
+    # Only for physical models — GP uses lc_model.interp() directly.
+    # If mag grid is missing, falls back to synthesize_mag_at_z_cached() (slow).
+    if args.model.endswith('_physical'):
+        mag_grid_pkl = shared_dir / 'physical_mag_grid.pkl'
+        if mag_grid_pkl.exists():
+            try:
+                t0_grid = datetime.now()
+                templates.load_magnitude_grid(str(mag_grid_pkl))
+                elapsed_grid = (datetime.now() - t0_grid).total_seconds()
+                _log(f"  Physical mag grid loaded — fast interpolation path active  "
+                     f"({elapsed_grid:.1f}s)")
+            except Exception as _e:
+                _log(f"  WARNING: could not load physical mag grid: {_e}")
+                _log(f"  WARNING: falling back to synthesize_mag_at_z_cached() (slow)")
+        else:
+            _log(f"  WARNING: physical_mag_grid.pkl not found — using slow path")
+            _log(f"  WARNING: run sbatch submit_rebuild_mag_grid.slurm to build it")
+
     # --- Step 2: Load or generate population ---
     print(f"\n{'='*60}")
     _log(f"CELL 3 — Population [{args.model}] for {len(args.cadences)} cadence(s)")

@@ -214,25 +214,61 @@ def evaluate_slsn(self, dataSlice, slice_point, return_full_obs=True):
 
     # For each observation
     if is_physical:
-        # Physical template path: full SED synthesis via synthesize_mag_at_z().
-        # Takes LSST filter directly — no catalog band lookup or color offset needed.
-        # synthesize_mag_at_z() applies luminosity distance internally — do NOT add dm.
-        # Pre-peak phases (time_rel < 1.0) return np.nan — intentional lower bound.
-        sed_entry = self.lc_model.sed_grid[tpl_idx]
-        for i, (t, filt) in enumerate(zip(time_rel, filts)):
-            # Quantize phase to 0.2-day bins for cache key — coarser than
-            # physical PHASE_GRID spacing but negligible science impact.
-            phase_bin_idx = int(phase_bucket_vec(np.array([t]), return_index=True)[0])
-            m_app = synthesize_mag_at_z_cached(
-                self._mag_cache, sed_entry, phase_bin_idx, z, filt
-            )
-            if not np.isfinite(m_app):
-                continue
-            A_filt = float(slice_point.get(f'A_{filt}', 0.0))
-            if A_filt == 0.0:
-                dust_model = DustValues()
-                A_filt = dust_model.ax1[filt] * ebv
-            mags[i] = m_app + A_filt
+        # Physical template path — two sub-paths based on whether mag grid is loaded:
+        #
+        # FAST PATH (mag grid loaded): vectorized RegularGridInterpolator lookup.
+        #   One interpolator call per filter per event — ~microseconds.
+        #   Requires physical_mag_grid.pkl to be loaded via load_magnitude_grid().
+        #
+        # SLOW PATH (no mag grid): synthesize_mag_at_z_cached() per observation.
+        #   Full SED synthesis on cache miss — ~milliseconds per observation.
+        #   Fallback when mag grid is unavailable.
+        #
+        # Both paths: pre-peak phases (time_rel < 1.0) return np.nan — intentional.
+        # MOSFiT posteriors constrained by post-peak data only. Detection efficiency
+        # is a lower bound on true high-z detection rate.
+
+        _has_grid = (
+            hasattr(self.lc_model, '_interps')
+            and self.lc_model._interps is not None
+        )
+
+        if _has_grid:
+            # FAST PATH: vectorized mag grid interpolation
+            for filt_name in np.unique(filts):
+                if filt_name not in self.lc_model._interps:
+                    continue
+                interp = self.lc_model._interps[filt_name][tpl_idx]
+                mask = filts == filt_name
+                # Only evaluate in-range phases — grid covers [1.0, 400.0] days
+                in_range = mask & (time_rel >= 1.0) & (time_rel <= 400.0)
+                if not np.any(in_range):
+                    continue
+                pts = np.column_stack([
+                    np.full(in_range.sum(), z),
+                    time_rel[in_range]
+                ])
+                raw = interp(pts).astype(float)
+                # Apply extinction — use self.ax1 (set in __init__, avoids per-obs object creation)
+                A_filt = float(slice_point.get(f'A_{filt_name}', 0.0))
+                if A_filt == 0.0:
+                    A_filt = self.ax1[filt_name] * ebv
+                finite = np.isfinite(raw)
+                mags[in_range] = np.where(finite, raw + A_filt, np.nan)
+        else:
+            # SLOW PATH: synthesize_mag_at_z_cached() per observation
+            sed_entry = self.lc_model.sed_grid[tpl_idx]
+            for i, (t, filt) in enumerate(zip(time_rel, filts)):
+                phase_bin_idx = int(phase_bucket_vec(np.array([t]), return_index=True)[0])
+                m_app = synthesize_mag_at_z_cached(
+                    self._mag_cache, sed_entry, phase_bin_idx, z, filt
+                )
+                if not np.isfinite(m_app):
+                    continue
+                A_filt = float(slice_point.get(f'A_{filt}', 0.0))
+                if A_filt == 0.0:
+                    A_filt = self.ax1[filt] * ebv
+                mags[i] = m_app + A_filt
     else:
         # GP template path: catalog band interpolation — unchanged.
         for i, (t, filt) in enumerate(zip(time_rel, filts)):

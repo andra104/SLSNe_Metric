@@ -201,6 +201,10 @@ def evaluate_slsn(self, dataSlice, slice_point, return_full_obs=True):
     # Process observations
     mjds = dataSlice[self.mjdCol]
     filts = dataSlice[self.filterCol]
+    # Normalize filter names — baseline_v5.3.0+ uses suffixed names
+    # e.g. 'g_6', 'r_57' instead of 'g', 'r'. Strip suffix for
+    # compatibility with synthesize_mag_at_z() and map_catalog_to_lsst_band().
+    filts = np.array([f.split('_')[0] for f in filts])
     m5 = dataSlice[self.m5Col]
 
     # Rest-frame time relative to peak

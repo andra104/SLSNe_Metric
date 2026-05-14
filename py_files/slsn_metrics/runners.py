@@ -1238,12 +1238,36 @@ def _run_cadence_worker(args):
      model_name, z_min, z_max, verbose, only_metrics) = args
 
     import os
+    import sqlite3 as _sqlite3
     import numpy as np
     import pandas as pd
     from datetime import datetime
     import rubin_sim.maf.db as mafdb
     from rubin_sim.maf.metric_bundles import MetricBundle, MetricBundleGroup
-    from .metrics import SLSN_Detect_Metric, SLSN_CharacterizeMetric, SLSN_VillarMetric, SLSN_ELAsTiCC_Metric, SLSN_SpecTriggerMetric
+
+    # Override mjd0 with cadence-specific value — each cadence has its own
+    # survey start MJD. baseline_v5.3.0 starts at 61208.2 vs ~60980 for others.
+    # Using the wrong MJD0 offsets rest-frame phase by (ΔMJD/(1+z)) days.
+    _cdb_path = os.path.join(db_dir, f"{cadence}.db")
+    try:
+        _con = _sqlite3.connect(_cdb_path)
+        _mjd0_cadence = float(
+            _con.execute("SELECT MIN(observationStartMJD) FROM observations")
+            .fetchone()[0]
+        )
+        _con.close()
+        if abs(_mjd0_cadence - mjd0) > 1.0:
+            print(f"  [{cadence}] MJD0 override: {mjd0:.2f} → {_mjd0_cadence:.2f}",
+                  flush=True)
+        mjd0 = _mjd0_cadence
+    except Exception as _e:
+        print(f"  [{cadence}] WARNING: could not read MJD0 from db: {_e}", flush=True)
+    from .metrics import (
+        SLSN_Detect_Metric, SLSN_CharacterizeMetric, SLSN_VillarMetric,
+        SLSN_ELAsTiCC_Metric, SLSN_SpecTriggerMetric,
+        SLSN_Detect_Physical_Metric, SLSN_Characterize_Physical_Metric,
+        SLSN_SpecTrigger_Physical_Metric, SLSN_Villar_Physical_Metric,
+    )
 
     n_events = len(population.slice_points['distance'])
     note     = "scheduler_note not like 'long%'" if ignore_triples else ""

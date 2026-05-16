@@ -254,7 +254,9 @@ def evaluate_slsn(self, dataSlice, slice_point, return_full_obs=True):
                 if A_filt == 0.0:
                     A_filt = self.ax1[filt_name] * ebv
                 finite = np.isfinite(raw)
-                mags[in_range] = np.where(finite, raw + A_filt, np.nan)
+                # Add dm: grid stores absolute mag (apparent - DM).
+                # dm is from slice_point['distance_modulus'] — same source as GP path.
+                mags[in_range] = np.where(finite, raw + dm + A_filt, np.nan)
         else:
             # SLOW PATH: synthesize_mag_at_z_cached() per observation
             sed_entry = self.lc_model.sed_grid[tpl_idx]
@@ -307,9 +309,8 @@ def evaluate_slsn(self, dataSlice, slice_point, return_full_obs=True):
             # Add extinction (per-filter if available, else generic)
             A_filt = slice_point.get(f'A_{filt}', 0.0)
             if A_filt == 0.0:
-                # Fallback: use dust model
-                dust_model = DustValues()
-                A_filt = dust_model.ax1[filt] * ebv
+                # Fallback: use self.ax1 (cached in __init__) — same as physical path
+                A_filt = self.ax1[filt] * ebv
 
             m_app += A_filt
 

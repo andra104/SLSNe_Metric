@@ -254,9 +254,10 @@ def evaluate_slsn(self, dataSlice, slice_point, return_full_obs=True):
                 if A_filt == 0.0:
                     A_filt = self.ax1[filt_name] * ebv
                 finite = np.isfinite(raw)
-                # Add dm: grid stores absolute mag (apparent - DM).
-                # dm is from slice_point['distance_modulus'] — same source as GP path.
-                mags[in_range] = np.where(finite, raw + dm + A_filt, np.nan)
+                # Grid stores apparent mags directly (synthesize_mag_at_z
+                # includes full DL scaling). Add only extinction — same
+                # convention as physical slow path.
+                mags[in_range] = np.where(finite, raw + A_filt, np.nan)
         else:
             # SLOW PATH: synthesize_mag_at_z_cached() per observation
             sed_entry = self.lc_model.sed_grid[tpl_idx]

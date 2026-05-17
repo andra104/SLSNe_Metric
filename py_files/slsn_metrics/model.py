@@ -201,7 +201,10 @@ def _compute_grid_slice(i_tpl, sed_grid, z_grid, phase_grid, filters, DMs):
         for i_z, z in enumerate(z_grid):
             m_app = np.array([synthesize_mag_at_z(sed, ph, z, filt) 
                              for ph in phase_grid])
-            grid_slice[i_z, :] = m_app - DMs[i_z]
+            # Store apparent mag directly — synthesize_mag_at_z()
+            # already includes full luminosity distance scaling.
+            # evaluate_slsn() fast path adds only A_filt, same as slow path.
+            grid_slice[i_z, :] = m_app
         result[filt] = grid_slice
     
     return i_tpl, result
@@ -718,8 +721,8 @@ class LC:
                 self.mag_grid[filt] = np.full((n_templates, n_z, n_phase), 
                                               np.nan, dtype=np.float32)
         
-        # Compute DMs once
-        DMs = dm_from_z(z_grid).astype(np.float32)
+        # DMs no longer needed — _compute_grid_slice now stores
+        # apparent mags directly (synthesize_mag_at_z includes DL scaling)
         
         # Process in batches with checkpointing
         print(f"[build_magnitude_grid] Processing {n_templates - start_idx} templates")
@@ -744,8 +747,7 @@ class LC:
                     z_grid=z_grid,
                     phase_grid=phase_grid,
                     filters=filters,
-                    DMs=DMs
-                )
+                            )
                 
                 # Process batch in parallel with progress bar
                 results = list(tqdm(

@@ -25,7 +25,7 @@
 
 # --- Configuration ---
 MODEL="fe_dependent_physical"           # naive | fe_dependent | o_dependent | *_physical variants
-CADENCE="noroll_v5.0.0_10yrs"
+CADENCE="baseline_v5.1.1_10yrs baseline_v5.3.0_10yrs noroll_v5.0.0_10yrs poor_weather_v5.0.1_10yrs"
 TEMPLATES="output/SLSNe/shared/physical_templates.pkl"
 
 # --- Environment ---
@@ -59,8 +59,9 @@ python3 run_slsn_pipeline.py \
     --templates-pkl $TEMPLATES \
     --z-min        0.1 \
     --z-max        5.0 \
-    --max-events   50000 \
-    --store-obs-mode meta \
+    --max-events   1000 \
+    --store-obs-mode none \
+    --n-workers    4 \
     --n-cores      $SLURM_CPUS_PER_TASK
 
 EXIT_CODE=$?

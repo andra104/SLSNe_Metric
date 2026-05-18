@@ -212,7 +212,22 @@ else:
                   f"code expects apparent (~{apparent_if_absolute:.1f}). "
                   f"Rebuild required: sbatch submit_rebuild_mag_grid.slurm"))
 
-    del grid, z_ax, ph_ax, r_arr
+    # F2.8: Check for suspiciously high mag values (>40 mag) in finite cells.
+    # At high-z in blue bands, SED coverage is marginal — synthesize_mag_at_z()
+    # may return very faint but finite values (e.g. 72 mag) instead of NaN.
+    # Undetectable events, not scientifically wrong, but >5% finite fraction
+    # suggests a SED coverage or grid build issue worth investigating.
+    finite_vals  = r_arr[np.isfinite(r_arr)]
+    n_suspicious = int(np.sum(finite_vals > 40.0))
+    frac_susp    = n_suspicious / max(len(finite_vals), 1)
+    check("F2.8 r-band: <5% of finite values suspiciously faint (>40 mag)",
+          frac_susp < 0.05,
+          f"n_susp={n_suspicious} ({100*frac_susp:.1f}% of finite), "
+          f"max={finite_vals.max():.1f} mag — "
+          + ("OK ✓" if frac_susp < 0.05
+             else "WARNING: check SED coverage at high-z"))
+
+    del grid, z_ax, ph_ax, r_arr, finite_vals
     gc.collect()
 
 # ---------------------------------------------------------------------------

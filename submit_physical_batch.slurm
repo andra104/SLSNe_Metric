@@ -140,7 +140,6 @@ python3 run_slsn_pipeline.py \
     --templates-pkl $TEMPLATES \
     --z-min 0.1 \
     --z-max 5.0 \
-    --max-events 2000 \
     --store-obs-mode none \
     --n-cores $CPUS \
     --n-workers $N_WORKERS

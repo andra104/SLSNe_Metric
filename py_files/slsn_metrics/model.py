@@ -164,13 +164,13 @@ def synthesize_mag_at_z(sed_grid: dict, phase_rest: float, z: float, filt: str) 
 # Helper function for parallel grid computation
 # =============================================================================
 
-def _compute_grid_slice(i_tpl, sed_grid, z_grid, phase_grid, filters, DMs):
+def _compute_grid_slice(i_tpl, sed_grid, z_grid, phase_grid, filters):
     """
     Compute one template's contribution to mag grid.
-    
+
     This function is at module level (not in class) so it can be pickled
     for multiprocessing.
-    
+
     Parameters
     ----------
     i_tpl : int
@@ -183,9 +183,7 @@ def _compute_grid_slice(i_tpl, sed_grid, z_grid, phase_grid, filters, DMs):
         Phase grid (rest-frame days)
     filters : list
         Filter names
-    DMs : array
-        Distance moduli at each z
-    
+
     Returns
     -------
     i_tpl : int

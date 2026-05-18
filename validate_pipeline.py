@@ -172,20 +172,45 @@ else:
           r_arr.shape == (265, 100, 79),
           f"shape={r_arr.shape}")
 
-    # Convention check: at z=0.1, phase=50d, grid value should be
-    # absolute mag ~ -15 to -20 (apparent - DM where DM~38.4)
+    # Convention diagnostic — detect whether grid stores absolute or apparent mags.
+    # Code convention (post-fix): grid stores APPARENT mags (raw > 0, ~15-30).
+    # Old convention (pre-fix):   grid stores ABSOLUTE mags (raw < 0, ~-15 to -20).
+    # If grid and code are out of sync, fast path produces wrong magnitudes.
     from slsn_metrics.constants import dm_from_z
     z01_idx  = int(np.argmin(np.abs(z_ax - 0.1)))
     ph50_idx = int(np.argmin(np.abs(ph_ax - 50.0)))
     sample   = float(r_arr[0, z01_idx, ph50_idx])
     dm_01    = dm_from_z(0.1)
-    apparent = sample + dm_01
-    check("F2.6 grid stores absolute mag (raw < 0 at z=0.1)",
-          sample < 0,
-          f"raw={sample:.3f} at z=0.1, phase=50d")
-    check("F2.7 raw + DM gives physical apparent mag (15-30)",
-          15.0 < apparent < 30.0,
-          f"raw={sample:.3f} + DM={dm_01:.3f} = {apparent:.3f}")
+    apparent_if_absolute = sample + dm_01  # what you get if grid stores absolute
+    
+    # Determine what the grid is actually storing
+    grid_is_apparent = 15.0 < sample < 35.0
+    grid_is_absolute = sample < 0 and 15.0 < apparent_if_absolute < 35.0
+    
+    if grid_is_apparent:
+        grid_convention = "apparent"
+    elif grid_is_absolute:
+        grid_convention = "absolute"
+    else:
+        grid_convention = "unknown"
+
+    # F2.6: Report what the file contains
+    check("F2.6 grid convention detectable (apparent or absolute)",
+          grid_convention in ("apparent", "absolute"),
+          f"raw={sample:.3f} at z=0.1, phase=50d — "
+          f"convention={grid_convention} "
+          f"({'raw is apparent mag' if grid_is_apparent else 'raw+DM=apparent' if grid_is_absolute else 'UNRECOGNIZED'})")
+
+    # F2.7: Code expects APPARENT mags — fail if grid is stale (absolute)
+    # This is the safety gate: blocks production if grid needs rebuild.
+    check("F2.7 grid matches code convention (apparent mags, no DM needed)",
+          grid_is_apparent,
+          f"raw={sample:.3f} — "
+          + (f"OK: apparent mag stored directly ✓"
+             if grid_is_apparent
+             else f"STALE GRID: stores absolute mag ({sample:.3f}), "
+                  f"code expects apparent (~{apparent_if_absolute:.1f}). "
+                  f"Rebuild required: sbatch submit_rebuild_mag_grid.slurm"))
 
     del grid, z_ax, ph_ax, r_arr
     gc.collect()

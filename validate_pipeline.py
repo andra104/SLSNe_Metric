@@ -295,6 +295,7 @@ else:
 section("M1 — DM consistency (4 sources)")
 # ---------------------------------------------------------------------------
 from slsn_metrics.constants import dm_from_z
+from slsn_metrics.model import LC  # needed for M6 GP path regardless of phys files
 import astropy.units as u
 from astropy.cosmology import Planck18 as cosmo
 

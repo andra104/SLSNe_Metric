@@ -795,6 +795,12 @@ def generate_SLSN_PopSlicer(lc_model,
             n_loaded = len(slice_data['ra'])
             print(f"[LOAD] z-filtered to {n_loaded} events "
                   f"(z_min={z_min}, z_max={z_max})")
+            # Reassign sid to sequential 0-based integers after z-filter.
+            # MAF uses sid as a direct array index into slice_points arrays.
+            # Without this, sids retain original full-population indices
+            # (e.g. 2338) which are out of bounds for the filtered array
+            # (size 585), causing IndexError in adaptive z-bin runs.
+            slice_data['sid'] = np.arange(n_loaded)
 
     # Cap population BEFORE building the slicer so MAF indexing is consistent
         if max_events is not None and n_loaded > max_events:
@@ -814,6 +820,15 @@ def generate_SLSN_PopSlicer(lc_model,
 
         slicer = UserPointsSlicer(ra=slice_data['ra'], dec=slice_data['dec'], badval=0)
         slicer.slice_points.update(slice_data)
+        # Runtime invariant check: sid must equal 0-based row indices.
+        # Violated sid causes silent wrong-event lookups in runners.py.
+        _sid_arr = np.asarray(slicer.slice_points['sid'])
+        _n_sp    = len(slicer.slice_points['distance'])
+        if not np.array_equal(_sid_arr, np.arange(_n_sp)):
+            raise RuntimeError(
+                f"FATAL: slice_points['sid'] is not 0-based sequential "
+                f"(n={_n_sp}, sid range {_sid_arr.min()}-{_sid_arr.max()}). "
+                f"All z-filter and subsampling paths must reset sid=np.arange(n).")
         if make_debug_plots:
             sp = slicer.slice_points
             plot_population_diagnostics(

@@ -47,7 +47,31 @@ CONV_THRESHOLD = 0.10  # 10% relative change = converged
 # ---------------------------------------------------------------------------
 
 def load_population_z(model, n_events):
-    """Load z values for the n_events subsample used in pipeline runs."""
+    """
+    Load z values for the n_events subsample used in pipeline runs.
+
+    Prefers z_values sidecar .npy files written by the pipeline alongside
+    metric_values .npy files — guaranteed to match exact event ordering.
+
+    Falls back to reconstructing from population pkl with seed=42 if no
+    sidecar exists (older runs before sidecar support was added).
+    """
+    import warnings
+    model_dir = OUTPUT / model
+    z_sidecars = sorted(model_dir.glob('z_values_*_z0.1-5.0_*.npy'),
+                        key=lambda f: f.stat().st_mtime)
+    for f in reversed(z_sidecars):
+        try:
+            z = np.load(str(f))
+            if len(z) == n_events:
+                return z.astype(float)
+        except Exception:
+            continue
+    warnings.warn(
+        f"No z_values sidecar found for {model} N={n_events}. "
+        f"Reconstructing from population pkl with seed={SEED}.",
+        UserWarning, stacklevel=2
+    )
     pop_path = SHARED / f'population_{model}.pkl'
     if not pop_path.exists():
         raise FileNotFoundError(f"Population not found: {pop_path}")
@@ -56,10 +80,9 @@ def load_population_z(model, n_events):
     z_all = np.asarray(pop['z'])
     n_total = len(z_all)
     del pop
-
+    gc.collect()
     if n_events >= n_total:
         return z_all
-
     rng  = np.random.default_rng(SEED)
     keep = rng.choice(n_total, size=n_events, replace=False)
     keep = np.sort(keep)

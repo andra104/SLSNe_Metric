@@ -1120,6 +1120,16 @@ def run_slsn_multi_metrics(
             if verbose:
                 print(f'  Saved: {npy_file}')
 
+        # --- Save z_values sidecar ---
+        # Companion file: z value per event in same order as metric_values .npy
+        # Avoids need to reconstruct z from population pkl in downstream analysis.
+        z_file = os.path.join(output_dir, f'z_values_{run_tag}.npy')
+        if not os.path.exists(z_file):
+            np.save(z_file, np.asarray(
+                population.slice_points['z'], dtype=np.float32))
+            if verbose:
+                print(f'  Saved: {z_file}')
+
         # Verify each .npy: exists, non-zero size, correct row count
         bad = []
         for mname, bundle in bundles.items():
@@ -1384,6 +1394,16 @@ def _run_cadence_worker(args):
         pd.DataFrame(summary_rows).to_csv(summary_file, index=False)
         if verbose:
             print(f'  Summary: {summary_file}', flush=True)
+
+        # --- Save z_values sidecar ---
+        # Companion file: z value per event in same order as metric_values .npy
+        # Avoids need to reconstruct z from population pkl in downstream analysis.
+        z_file = os.path.join(output_dir, f'z_values_{run_tag}.npy')
+        if not os.path.exists(z_file):
+            np.save(z_file, np.asarray(
+                population.slice_points['z'], dtype=np.float32))
+            if verbose:
+                print(f'  [{cadence}] Saved: {z_file}', flush=True)
 
         # Verify each .npy: exists, non-zero size, correct row count
         expected_shorts = [_name_map[m.__class__.__name__] for m in metrics_list]

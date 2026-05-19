@@ -116,6 +116,33 @@ def check_convergence(eff_prev, eff_curr, min_eff=0.001):
     return max_change < CONV_THRESHOLD, max_change, int(detectable.sum())
 
 
+def poisson_uncertainty(eff, n_bin):
+    """
+    Compute Poisson uncertainty on efficiency estimate.
+    sigma_eff = sqrt(eff * (1-eff) / n_bin)
+    Returns (sigma, relative_sigma)
+    Reliable when relative_sigma < 0.5 (uncertainty < 50% of value)
+    """
+    if n_bin == 0 or not np.isfinite(eff) or eff <= 0:
+        return np.nan, np.nan
+    sigma = np.sqrt(eff * (1.0 - eff) / n_bin)
+    rel_sigma = sigma / eff
+    return float(sigma), float(rel_sigma)
+
+
+def poisson_reliable(eff, n_bin, rel_threshold=0.50):
+    """
+    Check if efficiency estimate is Poisson-reliable.
+    Reliable when sigma_eff / eff < rel_threshold (default 50%).
+    More physically meaningful than relative-change convergence.
+    Returns (reliable, sigma, rel_sigma)
+    """
+    sigma, rel_sigma = poisson_uncertainty(eff, n_bin)
+    if not np.isfinite(rel_sigma):
+        return False, np.nan, np.nan
+    return rel_sigma < rel_threshold, sigma, rel_sigma
+
+
 # ---------------------------------------------------------------------------
 # Main analysis
 # ---------------------------------------------------------------------------
@@ -185,7 +212,12 @@ for model in MODELS:
 
                 print(f"\n    N={n:>8,}:")
                 for zlabel, e, c in det_bins:
-                    print(f"      {zlabel}: eff={e:.4f} ({c} events)")
+                    sigma, rel_sigma = poisson_uncertainty(e, c)
+                reliable, _, _ = poisson_reliable(e, c)
+                rel_pct = f"{100*rel_sigma:.0f}%" if np.isfinite(rel_sigma) else "N/A"
+                flag = "✓" if reliable else "⚠ noisy"
+                print(f"      {zlabel}: eff={e:.4f} ± {sigma:.4f} "
+                      f"({rel_pct} rel) [{c} events] {flag}")
                 if not det_bins:
                     print(f"      (no detectable z-bins)")
 
@@ -218,6 +250,34 @@ for model in MODELS:
     else:
         print(f"  No convergence detected in available N values")
         print(f"  → Run larger N or check detection rates")
+
+    # Poisson reliability check at largest available N
+    print(f"\n  Poisson reliability at largest N (sigma/eff < 50%):")
+    for cadence in CADENCES:
+        for metric in ["elasticc", "detect", "villar"]:
+            groups = find_npy_files(model, cadence, metric)
+            if not groups:
+                continue
+            n_max = max(groups.keys())
+            _, arr = groups[n_max]
+            if (model, n_max) not in pop_cache:
+                try:
+                    pop_cache[(model, n_max)] = load_population_z(model, n_max)
+                except Exception:
+                    continue
+            z_vals = pop_cache[(model, n_max)]
+            if len(z_vals) != len(arr):
+                continue
+            effs, counts = efficiency_by_z(arr, z_vals)
+            for i, (e, c) in enumerate(zip(effs, counts)):
+                if not np.isfinite(e) or e < 0.001:
+                    continue
+                reliable, sigma, rel_sigma = poisson_reliable(e, c)
+                status = "✓" if reliable else "⚠ NOISY"
+                print(f"    {cadence[:20]:20s} {metric:12s} "
+                      f"{Z_LABELS[i]:18s}: "
+                      f"eff={e:.4f}±{sigma:.4f} "
+                      f"({100*rel_sigma:.0f}% rel) N={n_max:,} {status}")
 
 # ---------------------------------------------------------------------------
 # Final verdict

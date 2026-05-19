@@ -1143,6 +1143,12 @@ def run_slsn_multi_metrics(
                 arr = np.load(npy, allow_pickle=False)
                 if arr.shape[0] != n_events:
                     bad.append(f'{short}: {arr.shape[0]} rows, expected {n_events}')
+                elif np.all(arr == 0) and n_events > 100:
+                    # Warn but do not fail — all-zero is valid for difficult metrics
+                    print(f'  WARNING: {short} all-zero — check mag grid and templates')
+                nan_frac = float(np.sum(~np.isfinite(arr))) / max(len(arr), 1)
+                if nan_frac > 0.01:
+                    bad.append(f'{short}: {100*nan_frac:.1f}% NaN values')
         if bad:
             raise RuntimeError(
                 f'[{cadence}] .npy verification failed:\n'
@@ -1418,6 +1424,11 @@ def _run_cadence_worker(args):
                 arr = np.load(npy, allow_pickle=False)
                 if arr.shape[0] != n_events:
                     bad.append(f'{short}: {arr.shape[0]} rows, expected {n_events}')
+                elif np.all(arr == 0) and n_events > 100:
+                    print(f'  [{cadence}] WARNING: {short} all-zero — check mag grid')
+                nan_frac = float(np.sum(~np.isfinite(arr))) / max(len(arr), 1)
+                if nan_frac > 0.01:
+                    bad.append(f'[{cadence}] {short}: {100*nan_frac:.1f}% NaN values')
         if bad:
             raise RuntimeError(
                 f'[{cadence}] .npy verification failed:\n'

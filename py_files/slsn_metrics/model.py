@@ -803,7 +803,22 @@ class LC:
             grid_data = pickle.load(f)
         self.mag_grid = grid_data['mag_grid']
         self.mag_grid_axes = grid_data['mag_grid_axes']
-        print(f"[load_magnitude_grid] Loaded with filters: {list(self.mag_grid.keys())}")
+        # Validate grid shape and convention
+        _filters = list(self.mag_grid.keys())
+        _shape   = np.asarray(self.mag_grid[_filters[0]]).shape
+        _z_ax    = np.asarray(self.mag_grid_axes['z'])
+        _ph_ax   = np.asarray(self.mag_grid_axes['phase'])
+        # Check grid stores apparent mags (positive values at low z)
+        _z01_idx  = int(np.argmin(np.abs(_z_ax - 0.1)))
+        _ph50_idx = int(np.argmin(np.abs(_ph_ax - 50.0)))
+        _sample   = float(np.asarray(self.mag_grid['r'])[0, _z01_idx, _ph50_idx])
+        if np.isfinite(_sample) and _sample < 0:
+            raise ValueError(
+                f"[load_magnitude_grid] Grid stores absolute mags "
+                f"(raw={_sample:.2f} at z=0.1 — expected >0 for apparent mags). "
+                f"Rebuild grid: sbatch submit_rebuild_mag_grid.slurm")
+        print(f"[load_magnitude_grid] Loaded with filters: {_filters}, "
+              f"shape={_shape}, convention=apparent ✓")
         self._build_interpolators()
         return self
     

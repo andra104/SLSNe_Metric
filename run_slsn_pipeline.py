@@ -285,6 +285,9 @@ def main():
     n_events = len(population.slice_points['distance'])
     elapsed = (datetime.now() - t0_step).total_seconds()
     _log(f"  Population ready: {n_events:,} events  ({elapsed:.1f}s)")
+    if n_events == 0:
+        sys.exit("FATAL ERROR: population is empty — "
+                 "check z_min/z_max, rate CSV, and gal_lat_cut")
 
     # --- Apply max_events cap (for diagnostic runs) ---
     if args.max_events is not None and n_events > args.max_events:

@@ -300,7 +300,7 @@ def main():
         sp = population.slice_points
         ra_sub  = np.degrees(sp['ra'][keep])
         dec_sub = np.degrees(sp['dec'][keep])
-        sub_pop = UserPointsSlicer(ra=ra_sub, dec=dec_sub, badval=0)
+        sub_pop = UserPointsSlicer(ra=ra_sub, dec=dec_sub)
         for key in sp.keys():
             try:
                 arr = np.asarray(sp[key])

@@ -1077,7 +1077,7 @@ def run_slsn_multi_metrics(
         
         # Extract per-metric results
         for metric_name, bundle in bundles.items():
-            n_success = int(bundle.metric_values.sum())
+            n_success = int((bundle.metric_values.filled(-1) == 1).sum())
             efficiency = n_success / n_events
             
             summary_rows.append({
@@ -1116,7 +1116,7 @@ def run_slsn_multi_metrics(
                 output_dir,
                 f'metric_values_{short}_{run_tag}.npy'
             )
-            np.save(npy_file, bundle.metric_values.filled(0).astype(np.float32))
+            np.save(npy_file, bundle.metric_values.filled(-1).astype(np.float32))
             if verbose:
                 print(f'  Saved: {npy_file}')
 
@@ -1380,7 +1380,7 @@ def _run_cadence_worker(args):
         summary_rows = []
         for mname, bundle in bundles.items():
             short     = _name_map[mname]
-            n_success = int(bundle.metric_values.sum())
+            n_success = int((bundle.metric_values.filled(-1) == 1).sum())
             efficiency = n_success / n_events
             summary_rows.append({
                 'cadence': cadence, 'metric': mname,
@@ -1389,7 +1389,7 @@ def _run_cadence_worker(args):
             })
             npy_file = os.path.join(
                 output_dir, f'metric_values_{short}_{run_tag}.npy')
-            np.save(npy_file, bundle.metric_values.filled(0).astype(np.float32))
+            np.save(npy_file, bundle.metric_values.filled(-1).astype(np.float32))
             if verbose:
                 print(f'  [{cadence}] {mname}: '
                       f'{100*efficiency:.2f}% ({n_success}/{n_events})')

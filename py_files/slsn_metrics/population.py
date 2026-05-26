@@ -818,7 +818,7 @@ def generate_SLSN_PopSlicer(lc_model,
             slice_data['sid'] = np.arange(max_events)
             print(f"[LOAD] Subsampled to {max_events} events (max_events cap)")
 
-        slicer = UserPointsSlicer(ra=slice_data['ra'], dec=slice_data['dec'], badval=0)
+        slicer = UserPointsSlicer(ra=slice_data['ra'], dec=slice_data['dec'])
         slicer.slice_points.update(slice_data)
         # Runtime invariant check: sid must equal 0-based row indices.
         # Violated sid causes silent wrong-event lookups in runners.py.
@@ -1000,7 +1000,7 @@ def generate_SLSN_PopSlicer(lc_model,
     # ------------------------------------------------------------------
     # STEP 5: Build MAF slicer and populate slice_points
     # ------------------------------------------------------------------
-    slicer = UserPointsSlicer(ra=ra, dec=dec, badval=0)
+    slicer = UserPointsSlicer(ra=ra, dec=dec)
     sp = slicer.slice_points
 
     sp['sid']              = np.arange(n_events)

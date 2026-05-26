@@ -130,7 +130,8 @@ def check_stop(bin_results_df, consecutive_zeros):
 
 
 def submit_bin_job(model, z_lo, z_hi, account, partition, output_dir,
-                   dependency_job_id=None, dry_run=False):
+                   dependency_job_id=None, dry_run=False,
+                   store_obs_mode="none", cadences=None):
     """
     Submit one z-bin SLURM job via sbatch --wrap.
     Returns job ID string, or 'DRY_RUN' if dry_run=True.
@@ -147,11 +148,11 @@ def submit_bin_job(model, z_lo, z_hi, account, partition, output_dir,
         f'{CONDA_INIT} && '
         f'python3 run_slsn_pipeline.py '
         f'--model {model} '
-        f'--cadences {" ".join(CADENCES)} '
+        f'--cadences {" ".join(cadences or CADENCES)} '
         f'--templates-pkl {TEMPLATES_PKL} '
         f'--z-min {z_lo_s} '
         f'--z-max {z_hi_s} '
-        f'--store-obs-mode none '
+        f'--store-obs-mode {store_obs_mode} '
         f'--n-workers {N_WORKERS}'
     )
 
@@ -213,7 +214,8 @@ def wait_for_job(job_id, poll_seconds=30):
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
-def run_adaptive(model, z_start, z_step, account, partition, dry_run):
+def run_adaptive(model, z_start, z_step, account, partition, dry_run,
+                 store_obs_mode="none", cadences=None):
     """Run adaptive z-bin loop for one model."""
     output_dir  = REPO / 'output/SLSNe' / model
     adaptive_dir = REPO / 'output/SLSNe/adaptive'
@@ -236,12 +238,18 @@ def run_adaptive(model, z_start, z_step, account, partition, dry_run):
         z_hi   = round(z_lo + z_step, 2)
         bin_num += 1
         log(f"\nBin {bin_num}: z=[{z_lo:.1f}, {z_hi:.1f})")
+        # Dry run guard — stop at z=2.0 to avoid infinite loop
+        # Real runs stop via check_stop() after reading actual CSV results
+        if dry_run and z_lo >= 2.0:
+            log("  DRY RUN: reached z=2.0 — stopping (real runs use adaptive criterion)")
+            break
 
         # Submit job — no dependency for first bin
         dep = None
         job_id = submit_bin_job(
             model, z_lo, z_hi, account, partition,
-            output_dir, dependency_job_id=dep, dry_run=dry_run
+            output_dir, dependency_job_id=dep, dry_run=dry_run,
+            store_obs_mode=store_obs_mode, cadences=cadences
         )
         log(f"  Submitted job {job_id}")
 
@@ -253,8 +261,9 @@ def run_adaptive(model, z_start, z_step, account, partition, dry_run):
 
             # Find and read summary CSVs
             csvs = find_summary_csvs(model, z_lo, z_hi, output_dir)
-            if len(csvs) < len(CADENCES):
-                log(f"  WARNING: expected {len(CADENCES)} summary CSVs, "
+            _cad_list = cadences or CADENCES
+            if len(csvs) < len(_cad_list):
+                log(f"  WARNING: expected {len(_cad_list)} summary CSVs, "
                     f"found {len(csvs)}")
 
             bin_df = read_bin_results(csvs, z_lo, z_hi)
@@ -308,6 +317,12 @@ def main():
                    help='SLURM partition (default: agsmall)')
     p.add_argument('--dry-run', action='store_true',
                    help='Print jobs without submitting')
+    p.add_argument('--store-obs-mode', default='none',
+                   choices=['none', 'meta', 'diag', 'full'],
+                   help='Observation storage mode (default: none)')
+    p.add_argument('--cadences', nargs='+',
+                   default=None,
+                   help='Cadences to run (default: all 4)')
     args = p.parse_args()
 
     # Validate
@@ -329,6 +344,8 @@ def main():
             account=args.account,
             partition=args.partition,
             dry_run=args.dry_run,
+            store_obs_mode=args.store_obs_mode,
+            cadences=args.cadences,
         )
 
     log("\nAll models complete.")

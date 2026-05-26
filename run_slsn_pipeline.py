@@ -101,7 +101,7 @@ def parse_args():
                         "Splits population into N chunks, runs simultaneously. "
                         "Default 1 (sequential). Use 4 for ~4x speedup on MSI.")
     p.add_argument('--store-obs-mode', default='none',
-                   choices=['none', 'meta', 'full'],
+                   choices=['none', 'meta', 'diag', 'full'],
                    help="Observation storage mode. "
                         "'none': summary only (production). "
                         "'meta': per-event metadata, no visit arrays. "

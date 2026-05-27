@@ -818,7 +818,10 @@ def generate_SLSN_PopSlicer(lc_model,
             slice_data['sid'] = np.arange(max_events)
             print(f"[LOAD] Subsampled to {max_events} events (max_events cap)")
 
-        slicer = UserPointsSlicer(ra=slice_data['ra'], dec=slice_data['dec'])
+        slicer = UserPointsSlicer(
+            ra=np.degrees(slice_data['ra']),
+            dec=np.degrees(slice_data['dec'])
+        )
         slicer.slice_points.update(slice_data)
         # Runtime invariant check: sid must equal 0-based row indices.
         # Violated sid causes silent wrong-event lookups in runners.py.

@@ -2389,7 +2389,7 @@ def plot_mc_rate_uncertainty(
     # --- Cumulative detections at each survey year (nominal) ---
     # peak_times is in relative days; t years = t*365.25 days
     base_cumulative = np.array([
-        detect_vals[peak_times <= yr * 365.25].sum()
+        (detect_vals[peak_times <= yr * 365.25] == 1).sum()
         for yr in survey_years
     ], dtype=float)   # shape: (n_years,)
 
@@ -2410,7 +2410,7 @@ def plot_mc_rate_uncertainty(
     if comparison_detect_vals is not None:
         comp_R = comparison_R_ref if comparison_R_ref is not None else R_ref_nominal
         comp_base = np.array([
-            comparison_detect_vals[comparison_peak_times <= yr * 365.25].sum()
+            (comparison_detect_vals[comparison_peak_times <= yr * 365.25] == 1).sum()
             for yr in survey_years
         ], dtype=float)
         comp_scale  = _sample_R_ref(n_realizations, seed=seed + 1) / comp_R
@@ -2556,7 +2556,7 @@ def plot_mc_rate_uncertainty_panel(
         n_injected      = len(detect_vals)
         V_ref           = n_injected / R_ref_nominal
         base_cumulative = np.array([
-            detect_vals[peak_times <= yr * 365.25].sum()
+            (detect_vals[peak_times <= yr * 365.25] == 1).sum()
             for yr in survey_years
         ], dtype=float)
 

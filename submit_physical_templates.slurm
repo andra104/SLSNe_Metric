@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=phys_mag_grid
+#SBATCH --job-name=phys_templates
 #SBATCH --account=cough052
 #SBATCH --partition=agsmall
 #SBATCH --nodes=1

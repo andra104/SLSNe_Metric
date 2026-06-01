@@ -141,10 +141,10 @@ def synthesize_mag_at_z(sed_grid: dict, phase_rest: float, z: float, filt: str) 
     
     # Distance scaling
     DL_pc = cosmo.luminosity_distance(float(z)).to_value(u.pc)
-    scale = (DL_pc / 10.0)**2 * (1.0 + z)
+    scale = (DL_pc / 10.0)**2 / (1.0 + z)  # Hogg 1999 eq.21: F_nu_obs = F_nu_abs*(1+z)/(DL/10)^2
     Fnu_obs_Jy = Fnu_abs_10pc / scale
     Fnu_obs_cgs = Fnu_obs_Jy * JY_TO_CGS
-    Flambda_obs = Fnu_obs_cgs * (C_CM_S / (lam_obs_cm**2))
+    Flambda_obs = Fnu_obs_cgs * (C_CM_S / (lam_obs_cm**2)) * 1e-7  # per-cm -> per-nm for Sed()
     
     # Check overlap
     bp = bands[filt]

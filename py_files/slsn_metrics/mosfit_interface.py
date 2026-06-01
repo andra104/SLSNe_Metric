@@ -103,7 +103,7 @@ def _flam_to_fnu_jy_at_10pc(flam_ergs_per_s_per_A: np.ndarray,
     """
     lam_cm       = lam_A * ANGSTROM_CM
     flam_at_10pc = flam_ergs_per_s_per_A / (4.0 * np.pi * D_10PC_CM**2)
-    fnu_cgs      = flam_at_10pc * lam_cm**2 / C_CGS
+    fnu_cgs      = flam_at_10pc * 1e8 * lam_cm**2 / C_CGS  # 1e8: F_lam per-A -> per-cm
     return fnu_cgs / JY
 
 

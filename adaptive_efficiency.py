@@ -334,7 +334,7 @@ def main():
     # Models themselves could run in parallel but we keep it simple —
     # sequential avoids any MSI queue pressure and is easy to monitor
     for model in args.models:
-        pop_pkl = REPO / 'output/SLSNe/shared' / f'population_{model}.pkl'
+        pop_pkl = REPO / 'output/SLSNe/shared' / f'population_{model}_physical.pkl'
         if not pop_pkl.exists():
             log(f"WARNING: population not found for {model} — skipping")
             continue

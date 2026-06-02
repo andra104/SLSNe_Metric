@@ -88,6 +88,7 @@ def read_bin_results(csvs, z_lo, z_hi):
     if not rows:
         return pd.DataFrame()
     combined = pd.concat(rows, ignore_index=True)
+    combined = combined.drop_duplicates(subset=['cadence', 'metric'], keep='last')
     # Add Poisson sigma
     eff = combined['efficiency'].values
     n   = combined['n_events'].values

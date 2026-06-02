@@ -332,6 +332,15 @@ def build_physical_sed_grid(
                                 Fnu_2d, 0.0)
             coverage = Fnu_2d > 0
 
+            # Sanity check: peak Fnu_abs at 10pc should be >1e8 Jy after unit fix
+            _peak_fnu = float(Fnu_2d.sum(axis=1).max())
+            if _peak_fnu < 1e8:
+                log.warning(
+                    "[build_physical_sed_grid] %s: peak Fnu_abs = %.2e Jy — "
+                    "expected >1e8 Jy at 10pc. Check _flam_to_fnu_jy_at_10pc units.",
+                    name, _peak_fnu
+                )
+
             # ── Build sed_entry matching model.py format ───────────────────
             sed_entry = {
                 'phase':      phase_grid.astype(float),

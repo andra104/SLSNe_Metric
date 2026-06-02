@@ -779,6 +779,25 @@ class LC:
 
         self._build_interpolators()
 
+        # Sanity check: r-band mag at z=0.1, phase=50d must be in 10-30 mag range
+        _r_cube   = np.asarray(self.mag_grid['r'])
+        _z01_idx  = int(np.argmin(np.abs(z_grid - 0.1)))
+        _ph50_idx = int(np.argmin(np.abs(phase_grid - 50.0)))
+        _sample   = float(np.nanmedian(_r_cube[:, _z01_idx, _ph50_idx]))
+        _nan_frac = float(np.isnan(_r_cube).mean())
+        if _nan_frac > 0.5:
+            raise RuntimeError(
+                f"[build_magnitude_grid] >50% NaN in r-band grid ({_nan_frac:.1%}) "
+                f"— check Fnu_abs scale in templates"
+            )
+        if not (10.0 < _sample < 30.0):
+            raise RuntimeError(
+                f"[build_magnitude_grid] r-band mag at z=0.1, ph=50d = {_sample:.2f} "
+                f"— expected 10-30. Check synthesize_mag_at_z units."
+            )
+        print(f"[build_magnitude_grid] Sanity check passed: "
+              f"r-band median={_sample:.2f}, NaN fraction={_nan_frac:.1%}")
+
         if save_to:
             grid_data = {
                 'mag_grid': self.mag_grid,

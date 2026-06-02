@@ -72,7 +72,7 @@ echo "Job 1 (bundle): $BUNDLE_JOB"
 # depends on Job 1 completing successfully
 # ---------------------------------------------------------------------------
 MODELS="fe_dependent_physical o_dependent_physical naive_physical"
-CADENCES="baseline_v5.1.1_10yrs baseline_v5.3.0_10yrs noroll_v5.0.0_10yrs poor_weather_v5.0.1_10yrs"
+CADENCES="baseline_v5.1.1_10yrs baseline_v5.3.0_10yrs"
 TEMPLATES=$REPO/output/SLSNe/shared/physical_templates.pkl
 N_WORKERS=4
 CPUS=4
@@ -143,17 +143,58 @@ echo 'Start : '\$(date)
 python3 adaptive_efficiency.py \
     --models naive_physical o_dependent_physical fe_dependent_physical \
     --z-start 0.1 \
-    --z-step 0.1
+    --z-step 0.1 \
+    --cadences baseline_v5.1.1_10yrs baseline_v5.3.0_10yrs
 echo 'End   : '\$(date)
 " | awk '{print $NF}')
 
 echo "Job 5 (adaptive): $ADAPTIVE_JOB"
+
+# ---------------------------------------------------------------------------
+# Job 6: Diagnostic run — fe_dependent x baseline_v5.1.1 with store-obs-mode meta
+# Small population (50k events) to get per-observation data for detection
+# horizon analysis. Depends on Job 1 (templates/grid/populations) only.
+# ---------------------------------------------------------------------------
+DIAG_JOB=$(sbatch \
+    --job-name=slsn_diag \
+    --account=$ACCOUNT \
+    --partition=$PARTITION \
+    --nodes=1 \
+    --ntasks=1 \
+    --cpus-per-task=$CPUS \
+    --mem=$MEM \
+    --time=04:00:00 \
+    --output=$REPO/output/logs/pipeline/fe_dependent_physical_diag_%j.out \
+    --error=$REPO/output/logs/pipeline/fe_dependent_physical_diag_%j.err \
+    --mail-type=END,FAIL \
+    --mail-user=andra104@umn.edu \
+    --dependency=afterok:$BUNDLE_JOB \
+    --wrap="
+cd $REPO
+source $CONDA_BASE/etc/profile.d/conda.sh
+conda activate rubin_sim_2.6.1
+echo 'Node  : '\$(hostname)
+echo 'Start : '\$(date)
+python3 run_slsn_pipeline.py \
+    --model fe_dependent_physical \
+    --cadences baseline_v5.1.1_10yrs \
+    --templates-pkl $TEMPLATES \
+    --z-min 0.1 \
+    --z-max 5.0 \
+    --store-obs-mode meta \
+    --max-events 50000 \
+    --n-workers 1
+echo 'End   : '\$(date)
+" | awk '{print $NF}')
+
+echo "Job 6 (diagnostic): $DIAG_JOB"
 
 echo "============================================================"
 echo "ALL JOBS SUBMITTED"
 echo "  Job 1 bundle:   $BUNDLE_JOB"
 echo "  Jobs 2-4 metrics: $METRIC_JOBS"
 echo "  Job 5 adaptive: $ADAPTIVE_JOB"
+echo "  Job 6 diagnostic: $DIAG_JOB"
 echo ""
 echo "Monitor: squeue -u \$USER"
 echo "Bundle log: tail -f output/logs/build/phys_bundle_${BUNDLE_JOB}.log"

@@ -1,0 +1,6 @@
+srun --account=cough052 --partition=agsmall \
+     --ntasks=1 --mem=64G --time=02:00:00 \
+     --pty bash
+
+jupyter notebook --no-browser --port=8889 --ip=0.0.0.0 \
+     --NotebookApp.token='slsn2024'

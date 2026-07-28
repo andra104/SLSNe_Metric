@@ -876,13 +876,17 @@ class SLSN_SpecTriggerMetric(SLSN_Base_Metric):
                 multifilter_pass = n_filters_near >= 2
 
             # --- Criterion 3: Brightness ---
-            # Use apparent mag from slice_point if available (injected),
-            # fall back to observed peak near window
+            # Check finite value first — for physical track, peak_app_mag_ebv_r
+            # exists in slice_point but is NaN by construction (lc_model.data is
+            # empty for physical templates). Checking key membership alone silently
+            # takes the NaN branch and never reaches the observed-photometry fallback.
+            # Fix: check isfinite before using the precomputed field.
             inj_col = 'peak_app_mag_ebv_r'
-            if inj_col in slice_point:
-                peak_mag = float(slice_point[inj_col])
+            inj_val = float(slice_point.get(inj_col, np.nan))
+            if np.isfinite(inj_val):
+                peak_mag = inj_val                       # GP track: use precomputed
             elif np.any(near):
-                peak_mag = float(np.nanmin(mags[near]))
+                peak_mag = float(np.nanmin(mags[near]))  # physical track: use observed
             else:
                 peak_mag = np.nan
 
@@ -1175,12 +1179,15 @@ class SLSN_SpecTrigger_Physical_Metric(SLSN_SpecTriggerMetric):
             if np.any(near):
                 multifilter_pass = len(np.unique(filters[near])) >= 2
 
-            # Criterion 3: Brightness — same as GP
+            # Criterion 3: Brightness
+            # peak_app_mag_ebv_r is NaN for physical track (lc_model.data empty).
+            # Check isfinite first — fall back to observed photometry if NaN.
             inj_col = 'peak_app_mag_ebv_r'
-            if inj_col in slice_point:
-                peak_mag = float(slice_point[inj_col])
+            inj_val = float(slice_point.get(inj_col, np.nan))
+            if np.isfinite(inj_val):
+                peak_mag = inj_val                       # GP track: use precomputed
             elif np.any(near):
-                peak_mag = float(np.nanmin(mags[near]))
+                peak_mag = float(np.nanmin(mags[near]))  # physical track: use observed
             else:
                 peak_mag = np.nan
 

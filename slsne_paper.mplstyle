@@ -2,8 +2,8 @@
 # Apply with: plt.style.use('path/to/slsne_paper.mplstyle')
 
 # Font
-font.family        : serif
-font.serif         : Computer Modern Roman
+font.family        : STIXGeneral
+font.serif         : STIXGeneral
 font.size          : 11
 axes.titlesize     : 12
 axes.labelsize     : 11

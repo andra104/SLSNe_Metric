@@ -1,0 +1,8 @@
+Telescope,z_limit,Aperture,Facility,Operational,N_naive_physical,pct_naive_physical,N_o_dependent_physical,pct_o_dependent_physical,N_fe_dependent_physical,pct_fe_dependent_physical
+LBT,0.8,2×8.4m,Ground (PI time secured),True,31829,11.3,32842,7.0,44793,4.9
+MMT,0.6,6.5m,Ground (NOAO queue),True,13308,4.7,13630,2.9,16782,1.8
+Keck/LRIS,1.2,10m,Ground (NOAO queue),True,95601,34.0,105618,22.6,169028,18.4
+Gemini/GMOS,1.0,8.1m,Ground (NOIRLab queue),True,60133,21.4,63476,13.6,94752,10.3
+HST/STIS,2.0,2.4m,NASA Space,True,230980,82.2,323786,69.3,608090,66.2
+JWST/NIRSpec,3.0,6.5m,NASA Space,True,277184,98.6,446936,95.7,876249,95.5
+Roman/GRISM,2.5,2.4m,NASA Space (2027+),False,266630,94.8,410526,87.9,797335,86.9

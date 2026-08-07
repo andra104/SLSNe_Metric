@@ -100,8 +100,22 @@ output/logs/pipeline/*.err
 
 # Raw supernova data directories
 data/SLSNe_raw/
-SLSNe/
+/SLSNe/
 supernovae/
+# ---------------------------------------------------------------------------
+# Canonical output files — tracked despite output/ being gitignored
+# These are small CSVs representing validated scientific results or
+# collaborator-provided data that cannot be trivially regenerated.
+# Parent directories must be explicitly un-ignored first (git limitation).
+# ---------------------------------------------------------------------------
+!output/
+!output/SLSNe/
+!output/SLSNe/adaptive/
+!output/SLSNe/shared/
+!output/SLSNe/adaptive/*_adaptive_results.csv
+!output/SLSNe/adaptive/*_efficiency.csv
+!output/SLSNe/shared/fiducial_models.csv
+!output/SLSNe/shared/*_oracle_rates.csv
 
 # But keep processed per-event CSVs if small
 !data/per_event/*.csv
@@ -151,3 +165,29 @@ notebooks/all_run.ipynb
 
 # egg-info
 py_files/*.egg-info/
+
+# ---------------------------------------------------------------------------
+# Canonical output files — tracked despite output/ being gitignored
+# These are small CSVs representing validated scientific results or
+# collaborator-provided data that cannot be trivially regenerated.
+# ---------------------------------------------------------------------------
+!output/SLSNe/adaptive/*_adaptive_results.csv
+!output/SLSNe/adaptive/*_efficiency.csv
+!output/SLSNe/adaptive/spectroscopic_accessibility_table.csv
+!output/SLSNe/shared/fiducial_models.csv
+!output/SLSNe/shared/*_oracle_rates.csv
+# Exclude everything inside output/SLSNe/ except the specific files above
+output/SLSNe/**/*.npy
+output/SLSNe/**/*.pkl
+output/SLSNe/**/*.png
+output/SLSNe/**/*.md
+output/SLSNe/**/logs/
+output/SLSNe/**/*_canonical.csv
+output/SLSNe/**/*_contaminated*.csv
+output/SLSNe/**/pre_fix_*/
+output/SLSNe/**/summary_*.csv
+output/SLSNe/**/z_values_*.csv
+output/SLSNe/fe_dependent/
+output/SLSNe/naive/
+output/SLSNe/o_dependent/
+output/SLSNe/slsn_multi_metrics_summary.csv

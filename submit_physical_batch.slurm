@@ -38,7 +38,7 @@ TIME=24:00:00
 CPUS=4
 N_WORKERS=4
 
-CADENCES="baseline_v5.1.1_10yrs baseline_v5.3.0_10yrs noroll_v5.0.0_10yrs poor_weather_v5.0.1_10yrs"
+CADENCES="baseline_v5.3.0_10yrs"
 
 mkdir -p $REPO/output/logs/pipeline
 

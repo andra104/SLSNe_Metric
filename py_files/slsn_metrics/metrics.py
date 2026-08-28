@@ -8,6 +8,7 @@ import numpy as np
 from rubin_sim.maf.metrics import BaseMetric
 from rubin_sim.phot_utils import DustValues
 from .constants import PHASE_BIN_STEP, phase_bucket_vec
+from .mosfit_interface import PHASE_GRID_MIN
 from .model import synthesize_mag_at_z, map_catalog_to_lsst_band, get_color_offset
 
 
@@ -182,11 +183,11 @@ def evaluate_slsn(self, dataSlice, slice_point, return_full_obs=True):
     available_bands = [b for b in template.keys() 
                       if isinstance(template[b], dict) and 'ph' in template[b]]
     
-    # Detect physical template track: .data is empty, .sed_grid is populated
-    # MOSFiT posteriors are constrained by post-peak photometry only (PHASE_GRID = 1..400).
-    # Pre-peak observations (time_rel < 1.0) return np.nan from synthesize_mag_at_z.
-    # Detection efficiency from the physical path is therefore a lower bound on the
-    # true high-z detection rate — this is intentional and scientifically correct.
+    # Detect physical template track: .data is empty, .sed_grid is populated.
+    # PHASE_GRID covers texplosion -> +400 d (see mosfit_interface.PHASE_GRID).
+    # Observations earlier than PHASE_GRID_MIN return np.nan from
+    # synthesize_mag_at_z; the rising LC between texplosion and MJD0 is
+    # included.
     is_physical = (
         len(available_bands) == 0
         and hasattr(self.lc_model, 'sed_grid')
@@ -240,8 +241,9 @@ def evaluate_slsn(self, dataSlice, slice_point, return_full_obs=True):
                     continue
                 interp = self.lc_model._interps[filt_name][tpl_idx]
                 mask = filts == filt_name
-                # Only evaluate in-range phases — grid covers [1.0, 400.0] days
-                in_range = mask & (time_rel >= 1.0) & (time_rel <= 400.0)
+                # Only evaluate in-range phases — grid covers [PHASE_GRID_MIN, 400.0] days
+                # (PHASE_GRID_MIN < 0 to include the rising LC)
+                in_range = mask & (time_rel >= PHASE_GRID_MIN) & (time_rel <= 400.0)
                 if not np.any(in_range):
                     continue
                 pts = np.column_stack([

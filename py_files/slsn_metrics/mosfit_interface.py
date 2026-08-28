@@ -70,16 +70,41 @@ PC_CM       = 3.085677581e18  # cm per parsec
 D_10PC_CM   = 10.0 * PC_CM   # 10 pc in cm
 
 # =============================================================================
+# UV-blanketing cap (physical iron edge)
+# =============================================================================
+# Per-event Gomez+2024 fits push lambda_0 (cutoff_wavelength) red where data
+# don't constrain it: ~30% of 265 templates have lambda_0 > 4000 A, ~7% > 5000.
+# Those events suppress flux through g/r bands even at z=0. The physical
+# line-blanketing edge from Fe-group lines is empirically near 3000 A
+# (Nicholl+2017, used as a fixed value by PLAsTiCC/ELAsTiCC SIMSED). Capping
+# at this value removes the unphysical tail without changing well-fit events.
+LAMBDA_0_MAX_A = 3000.0
+
+# =============================================================================
+# Catalog-peak anchoring (per-event normalization)
+# =============================================================================
+# Median-of-each-posterior-parameter does not in general reproduce the
+# catalog's reported peak magnitude (parameter degeneracies). Apply a
+# per-event multiplicative scale on Fnu_abs so the generated SED's peak
+# r-band absolute mag matches CATALOG_PEAK_MAG_COL from all_parameters.txt.
+ANCHOR_TO_CATALOG_PEAK = True
+CATALOG_PEAK_MAG_COL   = 'r_peak_med'
+CATALOG_PEAK_MAG_BAND  = 'r'
+
+# =============================================================================
 # Phase grid for SED evaluation
 # =============================================================================
-# Rest-frame phases in days relative to peak.
-# Dense near peak, sparser at late times.
-# Starts at +1 (not 0) to avoid T=0 at explosion boundary.
-# Matches range used in process_rest_frame() in mosutils.py.
+# Rest-frame phases in days relative to MJD0 (catalog reference epoch).
+# Includes the rising phase between texplosion (~-15 to -22 d from MJD0)
+# and the brightness peak (~+22 to +48 d). Pre-explosion phases are masked
+# to zero flux by _call_slsnni_safe(); the model functions handle negative
+# phases correctly via times - rest_t_explosion.
 PHASE_GRID = np.concatenate([
-    np.linspace(1,   100, 100),   # +1 to +100 days, ~1-day steps
-    np.linspace(100, 400,  61),   # +100 to +400 days, 5-day steps
+    np.linspace(-30,    0,  31),  # -30 to 0:    pre-MJD0, rising from explosion
+    np.linspace(  1,  100, 100),  # +1 to +100:  near-peak / early decline
+    np.linspace(100,  400,  61),  # +100 to +400: late-time tail
 ])
+PHASE_GRID_MIN = float(PHASE_GRID.min())  # exposed for metrics.py consumers
 
 # =============================================================================
 # Wavelength grid for SED sampling
@@ -90,6 +115,41 @@ PHASE_GRID = np.concatenate([
 # minimum 62 overlap points at z=5 in u-band (threshold is 20)
 # 6x speedup vs 3000 points with no science loss
 WAVE_GRID_A = np.linspace(500.0, 12000.0, 500)   # Angstroms, rest frame
+
+def _abs_mag_through_band(fnu_abs_Jy: np.ndarray,
+                          lam_rest_A: np.ndarray,
+                          filt: str) -> float:
+    """
+    Compute the absolute AB magnitude through an LSST band, given F_nu in
+    Jy at 10 pc on lam_rest_A. Mirrors the arithmetic of synthesize_mag_at_z()
+    at z=0, scale=1 so any internal units convention used by Fnu_abs
+    round-trips correctly.
+    """
+    # Lazy import to avoid pulling rubin_sim at module import time.
+    from .model import get_lsst_bands
+    from rubin_sim.phot_utils import Sed
+
+    bands = get_lsst_bands()
+    if filt not in bands:
+        return float('nan')
+
+    lam_obs_nm = lam_rest_A / 10.0
+    lam_obs_cm = lam_rest_A * ANGSTROM_CM
+    Fnu_obs_cgs = np.clip(np.nan_to_num(fnu_abs_Jy), 0.0, None) * JY
+    Flambda_obs = Fnu_obs_cgs * (C_CGS / (lam_obs_cm ** 2))
+
+    bp = bands[filt]
+    if (lam_obs_nm.min() > bp.wavelen.min()
+            or lam_obs_nm.max() < bp.wavelen.max()):
+        return float('nan')
+
+    sed = Sed(wavelen=lam_obs_nm, flambda=Flambda_obs)
+    try:
+        m = float(sed.calc_mag(bp))
+        return m if np.isfinite(m) else float('nan')
+    except Exception:
+        return float('nan')
+
 
 def _flam_to_fnu_jy_at_10pc(flam_ergs_per_s_per_A: np.ndarray,
                               lam_A: np.ndarray) -> np.ndarray:
@@ -289,7 +349,12 @@ def build_physical_sed_grid(
             fnickel     = float(row['fnickel_med'])
             vejecta     = float(row['vejecta_med'])
             temperature = float(row['temperature_med'])
-            cut_wave    = float(row['cutoff_wavelength_med'])
+            # Cap lambda_0 at the physical Fe edge (see LAMBDA_0_MAX_A above)
+            cut_wave_raw = float(row['cutoff_wavelength_med'])
+            cut_wave     = min(cut_wave_raw, LAMBDA_0_MAX_A)
+            if cut_wave != cut_wave_raw:
+                log.debug("[mosfit_interface] %s: lambda_0 capped %.0f -> %.0f A",
+                          name, cut_wave_raw, cut_wave)
             alpha       = float(row['alpha_med'])
 
             # log_kappa_gamma: slsnni expects log10(kappagamma)
@@ -330,6 +395,31 @@ def build_physical_sed_grid(
 
             Fnu_2d   = np.where(np.isfinite(Fnu_2d) & (Fnu_2d > 0),
                                 Fnu_2d, 0.0)
+
+            # Anchor peak r-band absolute mag to the catalog's r_peak_med.
+            # Median-of-each-posterior-parameter does not in general reproduce
+            # the catalog's reported peak magnitude (parameter degeneracies);
+            # apply a uniform multiplicative correction per event.
+            if (ANCHOR_TO_CATALOG_PEAK
+                    and CATALOG_PEAK_MAG_COL in params.columns
+                    and Fnu_2d.sum() > 0):
+                target_M = float(row[CATALOG_PEAK_MAG_COL])
+                if np.isfinite(target_M):
+                    pk = int(np.argmax(np.nansum(Fnu_2d, axis=1)))
+                    current_M = _abs_mag_through_band(
+                        Fnu_2d[pk], wave_grid_A, CATALOG_PEAK_MAG_BAND,
+                    )
+                    if np.isfinite(current_M):
+                        scale = 10.0 ** (0.4 * (current_M - target_M))
+                        if 0.05 < scale < 20.0:
+                            Fnu_2d *= scale
+                            log.debug(
+                                "[mosfit_interface] %s: M_%s anchor "
+                                "%.2f -> %.2f (scale=%.3f)",
+                                name, CATALOG_PEAK_MAG_BAND,
+                                current_M, target_M, scale,
+                            )
+
             coverage = Fnu_2d > 0
 
             # Sanity check: peak Fnu_abs at 10pc should be >1e8 Jy after unit fix

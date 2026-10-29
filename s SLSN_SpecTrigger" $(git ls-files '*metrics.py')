@@ -1,0 +1,10 @@
+d29087a 2026-08-19 feat: add submit_adaptive_spectrigger.slurm
+3a6a8bf 2026-08-08 chore: update batch scripts; add SpecTrigger validation script
+c0b3a65 2026-08-07 chore: track canonical output CSVs; fix .gitignore for output/SLSNe/
+d3cbeb7 2026-08-07 fix: update style file font to STIXGeneral; notebook and style updates
+bed4fc4 2026-06-17 refactor: consolidate model/cadence/metric labels into Cell 1 canonical dicts
+4398f8b 2026-06-16 things got screwy with the notebook 2
+3da0785 2026-06-16 things got screwy with the notebook
+7f46e77 2026-06-15 copied
+3218998 2026-06-15 feat: update analysis notebook for post-fix production runs
+d31dd0c 2026-06-15 Amended Cell numbers
